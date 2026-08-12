@@ -1,0 +1,29 @@
+{
+  "name": "projeto_alunos",
+  "version": "1.0.0",
+  "description": "Sistema de gerenciamento de alunos",
+  "main": "src/server.js",
+  "engines": {
+    "node": ">=20.17.0"
+  },
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node --watch src/server.js",
+    "quickstart": "npm run build && node src/scripts/quickstart.js",
+    "build": "npm --prefix teste-react run build",
+    "test": "node --test test/student-account-cleanup.test.js",
+    "client:dev": "npm --prefix teste-react run dev",
+    "create:admin": "node src/scripts/create-admin.js"
+  },
+  "dependencies": {
+    "bcryptjs": "^3.0.3",
+    "csv-parse": "^7.0.2",
+    "express": "^4.22.2",
+    "express-session": "^1.17.5",
+    "multer": "^2.2.0",
+    "sqlite3": "^6.0.1"
+  },
+  "overrides": {
+    "body-parser": "1.20.6"
+  }
+}
