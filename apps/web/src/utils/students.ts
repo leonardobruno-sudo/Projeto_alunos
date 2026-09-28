@@ -1,6 +1,6 @@
 /** Responsabilidade: normaliza dados de alunos e calcula textos de apresentação. */
 
-import type { Student, StudentListData, Subject, SubjectData } from '../types'
+import type { Student, StudentDetailData, StudentListData, Subject, SubjectData } from '../types'
 
 function numberOrZero(value: unknown): number {
   const parsed = Number(value)
@@ -60,7 +60,7 @@ export function getStudents(data: StudentListData | Student[] | SubjectData): St
   return data.alunos ?? data.students ?? []
 }
 
-export function getPeriodOptions(data: StudentListData | SubjectData, fallback: string[]): string[] {
+export function getPeriodOptions(data: StudentListData | SubjectData | StudentDetailData, fallback: string[]): string[] {
   return data.periodOptions && data.periodOptions.length > 0 ? data.periodOptions : fallback
 }
 
@@ -78,17 +78,15 @@ export function getSubjectNames(students: Student[]): string[] {
 }
 
 export function getStudentStatus(student: Student): string {
-  const subjects = getStudentSubjects(student)
-  const statuses = [student.situacao_risco, ...subjects.map((subject) => subject.situacao_risco)]
-    .map((status) => asText(status).toLocaleLowerCase('pt-BR'))
+  // The API calculates this field from the same aggregate grade and absence
+  // percentage shown in the table. Do not promote a subject-level warning to
+  // the whole student here: the Matérias view receives that subject directly.
+  const serverStatus = asText(student.situacao_risco).trim().toLocaleLowerCase('pt-BR')
+  if (serverStatus.includes('risco')) return 'Em risco'
+  if (serverStatus.includes('alerta')) return 'Alerta'
 
-  const hasRisk = statuses.some((status) => status.includes('risco')) ||
-    subjects.some((subject) => subject.risco_nota || subject.risco_faltas)
-  if (hasRisk) return 'Em risco'
-
-  const hasWarning = statuses.some((status) => status.includes('alerta')) ||
-    subjects.some((subject) => subject.alerta_nota || subject.alerta_faltas)
-  if (hasWarning) return 'Alerta'
+  if (student.risco_nota || student.risco_faltas) return 'Em risco'
+  if (student.alerta_nota || student.alerta_faltas) return 'Alerta'
 
   return 'Regular'
 }

@@ -5,7 +5,7 @@
 const { spawn } = require('child_process');
 const path = require('path');
 
-const projectRoot = path.join(__dirname, '..', '..');
+const projectRoot = path.join(__dirname, '..', '..', '..', '..');
 const serverPath = path.join(__dirname, '..', 'server.js');
 let browserOpened = false;
 

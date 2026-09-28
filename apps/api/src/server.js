@@ -16,7 +16,7 @@ const PORT = process.env.PORT ? Number(process.env.PORT) : 3000;
 const isProduction = process.env.NODE_ENV === 'production';
 const sessionSecret = process.env.SESSION_SECRET || 'development-only-change-this-secret';
 const sessionMaxAge = 1000 * 60 * 60;
-const clientDistPath = path.join(__dirname, '..', 'teste-react', 'dist');
+const clientDistPath = path.join(__dirname, '..', '..', 'web', 'dist');
 const clientIndexPath = path.join(clientDistPath, 'index.html');
 
 if (isProduction && !process.env.SESSION_SECRET) {

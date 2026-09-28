@@ -2,15 +2,16 @@
 
 import { useRef, useState, type ChangeEvent, type FormEvent } from 'react'
 import { StudentForm } from '../components/StudentForm'
-import type { StudentImportResult, StudentMovePayload, StudentPayload } from '../types'
+import type { StudentImportResult, StudentMovePayload, StudentPayload, User } from '../types'
 import { api } from '../utils/api'
 
 interface RegistrationPageProps {
+  user: User
   onMessage: (message: string) => void
   onError: (error: unknown) => string
 }
 
-export function RegistrationPage({ onMessage, onError }: RegistrationPageProps) {
+export function RegistrationPage({ user, onMessage, onError }: RegistrationPageProps) {
   const importInputRef = useRef<HTMLInputElement>(null)
   const [matricula, setMatricula] = useState('')
   const [disciplina, setDisciplina] = useState('')
@@ -23,6 +24,7 @@ export function RegistrationPage({ onMessage, onError }: RegistrationPageProps) 
   const [importResult, setImportResult] = useState<StudentImportResult | null>(null)
   const [importing, setImporting] = useState(false)
   const [downloadingTemplate, setDownloadingTemplate] = useState(false)
+  const isAdmin = user.role === 'Admin'
 
   async function createStudent(payload: StudentPayload): Promise<string> {
     const result = await api.createStudent(payload)
@@ -132,55 +134,57 @@ export function RegistrationPage({ onMessage, onError }: RegistrationPageProps) 
         </div>
       </div>
 
-      <section className="card import-card">
-        <div className="section-heading">
-          <div>
-            <h2>Importar alunos por CSV</h2>
-            <p className="muted">Baixe o modelo, preencha uma linha para cada aluno e envie o arquivo para cadastro em lote. Cada aluno importado recebe uma conta de acesso.</p>
-          </div>
-          <button className="button button-secondary" disabled={downloadingTemplate} onClick={downloadTemplate} type="button">
-            {downloadingTemplate ? 'Baixando modelo...' : 'Baixar modelo CSV'}
-          </button>
-        </div>
-
-        {importError && <div className="alert alert-error" role="alert">{importError}</div>}
-
-        <form className="import-form" onSubmit={importStudents}>
-          <label className="file-input-label">
-            Arquivo CSV
-            <input accept=".csv,text/csv" onChange={selectImportFile} ref={importInputRef} type="file" />
-          </label>
-          <div className="import-file-summary" aria-live="polite">
-            {importFile ? `Selecionado: ${importFile.name}` : 'Nenhum arquivo selecionado.'}
-          </div>
-          <button className="button button-primary" disabled={importing || !importFile} type="submit">
-            {importing ? 'Importando...' : 'Importar alunos'}
-          </button>
-        </form>
-
-        {importResult && (
-          <div className="import-result" role="status">
-            <h3>Resultado da importação</h3>
-            <div className="import-summary">
-              <span><strong>{importResult.summary.imported}</strong> importado(s)</span>
-              <span><strong>{importResult.summary.skipped}</strong> ignorado(s)</span>
-              <span><strong>{importResult.summary.errors}</strong> erro(s)</span>
+      {isAdmin && (
+        <section className="card import-card">
+          <div className="section-heading">
+            <div>
+              <h2>Importar alunos por CSV</h2>
+              <p className="muted">Baixe o modelo, preencha uma linha para cada aluno e envie o arquivo para cadastro em lote. Cada aluno importado recebe uma conta de acesso.</p>
             </div>
-            {importResult.errors.length > 0 && (
-              <div className="import-errors">
-                <p>Revise as linhas abaixo e envie um novo arquivo apenas com os registros corrigidos.</p>
-                <ul>
-                  {importResult.errors.map((error, index) => (
-                    <li key={`${error.line}-${index}`}>
-                      Linha {error.line}: {error.message}
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            )}
+            <button className="button button-secondary" disabled={downloadingTemplate} onClick={downloadTemplate} type="button">
+              {downloadingTemplate ? 'Baixando modelo...' : 'Baixar modelo CSV'}
+            </button>
           </div>
-        )}
-      </section>
+
+          {importError && <div className="alert alert-error" role="alert">{importError}</div>}
+
+          <form className="import-form" onSubmit={importStudents}>
+            <label className="file-input-label">
+              Arquivo CSV
+              <input accept=".csv,text/csv" onChange={selectImportFile} ref={importInputRef} type="file" />
+            </label>
+            <div className="import-file-summary" aria-live="polite">
+              {importFile ? `Selecionado: ${importFile.name}` : 'Nenhum arquivo selecionado.'}
+            </div>
+            <button className="button button-primary" disabled={importing || !importFile} type="submit">
+              {importing ? 'Importando...' : 'Importar alunos'}
+            </button>
+          </form>
+
+          {importResult && (
+            <div className="import-result" role="status">
+              <h3>Resultado da importação</h3>
+              <div className="import-summary">
+                <span><strong>{importResult.summary.imported}</strong> importado(s)</span>
+                <span><strong>{importResult.summary.skipped}</strong> ignorado(s)</span>
+                <span><strong>{importResult.summary.errors}</strong> erro(s)</span>
+              </div>
+              {importResult.errors.length > 0 && (
+                <div className="import-errors">
+                  <p>Revise as linhas abaixo e envie um novo arquivo apenas com os registros corrigidos.</p>
+                  <ul>
+                    {importResult.errors.map((error, index) => (
+                      <li key={`${error.line}-${index}`}>
+                        Linha {error.line}: {error.message}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </div>
+          )}
+        </section>
+      )}
 
       <div className="two-column-layout">
         <section className="card">

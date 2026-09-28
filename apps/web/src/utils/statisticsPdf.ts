@@ -64,13 +64,14 @@ function formatDate(value: Date): string {
 
 function filterSummary(filters: StatisticsFilters): string {
   const values = [
+    filters.busca_nome && `Aluno: ${filters.busca_nome}`,
     filters.curso && `Curso: ${filters.curso}`,
     filters.turma && `Turma: ${filters.turma}`,
     filters.categoria && `Categoria: ${filters.categoria}`,
     filters.cota && `Categoria de cota: ${quotaLabel(filters.cota)}`,
   ].filter(Boolean)
 
-  return values.length > 0 ? values.join(' | ') : 'Sem filtros administrativos adicionais'
+  return values.length > 0 ? values.join(' | ') : 'Sem filtros adicionais'
 }
 
 function dataSourceLabel(source: StatisticsData['dataSource']): string {
@@ -86,10 +87,10 @@ function drawPageHeader(doc: jsPDF, title: string): number {
   doc.setTextColor(255, 255, 255)
   doc.setFont('helvetica', 'bold')
   doc.setFontSize(14)
-  doc.text('SAC', margin, 28)
+  doc.text('SGAC', margin, 28)
   doc.setFont('helvetica', 'normal')
   doc.setFontSize(9)
-  doc.text('Sistema de Alunos Cotistas', margin, 45)
+  doc.text('Sistema de Gerenciamento de Alunos Cotistas', margin, 45)
   doc.setFont('helvetica', 'bold')
   doc.setFontSize(10)
   doc.text(cleanPdfText(title), width - margin, 34, { align: 'right' })

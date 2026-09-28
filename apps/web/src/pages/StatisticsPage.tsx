@@ -1,6 +1,6 @@
 /** Presents scoped academic indicators with selectable charts, export and print actions. */
 
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { StatisticsChart, type ChartDatum, type StatisticsChartType } from '../components/StatisticsChart'
 import { QUOTA_OPTIONS, quotaLabel } from '../constants/quotas'
 import { DEFAULT_PERIODS, type StatisticsData, type StatisticsFilters, type StatisticsValue, type User } from '../types'
@@ -21,13 +21,15 @@ const chartOptions: Array<{ type: StatisticsChartType; label: string }> = [
   { type: 'area', label: 'Área' },
 ]
 
-interface AdminStatisticsFilters {
+interface StatisticsSearchFilters {
+  busca_nome: string
   curso: string
   turma: string
   cota: string
 }
 
-const emptyAdminFilters: AdminStatisticsFilters = {
+const emptyStatisticsFilters: StatisticsSearchFilters = {
+  busca_nome: '',
   curso: '',
   turma: '',
   cota: '',
@@ -48,6 +50,13 @@ function formatPercent(value: number): string {
   return `${formatNumber(value, 1)}%`
 }
 
+function comparisonLabel(current: number, previous: number | undefined, formatter: (value: number) => string): string {
+  if (previous === undefined) return 'Sem período anterior salvo'
+  const difference = current - previous
+  if (difference === 0) return 'Sem variação no histórico'
+  return `${difference > 0 ? '+' : '−'}${formatter(Math.abs(difference))} vs. período anterior`
+}
+
 function chartData(values: StatisticsValue[]): ChartDatum[] {
   return values.map((item) => ({ label: item.label, value: Number(item.value) || 0 }))
 }
@@ -56,12 +65,13 @@ function csvCell(value: string | number): string {
   return `"${String(value).replaceAll('"', '""')}"`
 }
 
-function hasAdminFilters(filters: AdminStatisticsFilters): boolean {
-  return Boolean(filters.curso || filters.turma || filters.cota)
+function hasStatisticsFilters(filters: StatisticsSearchFilters): boolean {
+  return Boolean(filters.busca_nome || filters.curso || filters.turma || filters.cota)
 }
 
-function adminFilterSummary(filters: StatisticsFilters): string {
+function statisticsFilterSummary(filters: StatisticsFilters): string {
   const parts = [
+    filters.busca_nome && `Aluno: ${filters.busca_nome}`,
     filters.curso && `Curso: ${filters.curso}`,
     filters.turma && `Turma: ${filters.turma}`,
     filters.categoria && `Categoria: ${filters.categoria}`,
@@ -95,19 +105,19 @@ function dataSourceLabel(source: StatisticsData['dataSource']): string {
 }
 
 function downloadCsv(data: StatisticsData) {
-  const appliedFilterText = adminFilterSummary(data.filters)
+  const appliedFilterText = statisticsFilterSummary(data.filters)
   const rows: Array<Array<string | number>> = [
     ['Relatório de estatísticas acadêmicas', ''],
     ['Período', data.currentPeriodName],
     ['Escopo', data.scope.label],
     ['Origem dos dados', dataSourceLabel(data.dataSource)],
-    ['Filtros administrativos', appliedFilterText],
+    ['Filtros de consulta', appliedFilterText],
     [],
     ['Indicador', 'Valor'],
     ['Alunos visíveis', data.totals.students],
     ['Registros de matéria', data.totals.subjectRecords],
     ['Média geral', formatGrade(data.totals.averageGrade)],
-    ['Frequência média (%)', formatPercent(data.totals.averageAttendancePercent)],
+    ['Média de faltas (%)', formatPercent(data.totals.averageAttendancePercent)],
     ['Em risco', data.totals.atRisk],
     ['Em alerta', data.totals.alert],
     ['Regular', data.totals.regular],
@@ -118,7 +128,7 @@ function downloadCsv(data: StatisticsData) {
     ['Faixa de nota', 'Quantidade'],
     ...data.gradeDistribution.map((item) => [item.label, item.value]),
     [],
-    ['Faixa de frequência', 'Quantidade'],
+    ['Faixa de faltas', 'Quantidade'],
     ...data.attendanceDistribution.map((item) => [item.label, item.value]),
     [],
     ['Evolução por período', 'Histórico salvo', 'Alunos', 'Média', 'Faltas (%)', 'Em risco', 'Em alerta'],
@@ -126,7 +136,7 @@ function downloadCsv(data: StatisticsData) {
       ? [item.label, 'Sim', item.students, formatGrade(item.averageGrade), formatPercent(item.averageAttendancePercent), item.atRisk, item.alert]
       : [item.label, item.available ? 'Sim - sem registros no filtro' : 'Não', 0, formatGrade(0), formatPercent(0), 0, 0]),
     [],
-    ['Matéria', 'Alunos', 'Média de nota', 'Frequência média (%)', 'Em risco', 'Em alerta', 'Regular'],
+    ['Matéria', 'Alunos', 'Média de nota', 'Média de faltas (%)', 'Em risco', 'Em alerta', 'Regular'],
     ...data.subjectAverages.map((item) => [
       item.subject,
       item.studentCount,
@@ -160,24 +170,31 @@ export function StatisticsPage({ user, onMessage, onError }: StatisticsPageProps
   const [data, setData] = useState<StatisticsData | null>(null)
   const [periodIndex, setPeriodIndex] = useState(0)
   const [chartType, setChartType] = useState<StatisticsChartType>('columns')
-  const [draftFilters, setDraftFilters] = useState<AdminStatisticsFilters>(emptyAdminFilters)
-  const [appliedFilters, setAppliedFilters] = useState<AdminStatisticsFilters>(emptyAdminFilters)
+  const [draftFilters, setDraftFilters] = useState<StatisticsSearchFilters>(emptyStatisticsFilters)
+  const [appliedFilters, setAppliedFilters] = useState<StatisticsSearchFilters>(emptyStatisticsFilters)
   const [loading, setLoading] = useState(true)
   const [generatingPdf, setGeneratingPdf] = useState(false)
   const [savingHistory, setSavingHistory] = useState(false)
   const [error, setError] = useState('')
   const requestVersion = useRef(0)
   const isAdmin = user.role === 'Admin'
+  const canSearchStudents = ['Professor', 'Diretor', 'Admin'].includes(user.role)
+  const shouldShowGradeDistribution = user.role !== 'Aluno'
 
-  const load = useCallback(async (requestedPeriod: number, requestedFilters: AdminStatisticsFilters) => {
+  const load = useCallback(async (requestedPeriod: number, requestedFilters: StatisticsSearchFilters) => {
     const version = ++requestVersion.current
     setLoading(true)
     setError('')
 
     try {
+      const scopedFilters = isAdmin
+        ? requestedFilters
+        : canSearchStudents
+          ? { busca_nome: requestedFilters.busca_nome }
+          : {}
       const result = await api.getStatistics({
         periodo: requestedPeriod,
-        ...(user.role === 'Admin' ? requestedFilters : {}),
+        ...scopedFilters,
       })
       if (version !== requestVersion.current) return
       setData(result.data)
@@ -187,20 +204,20 @@ export function StatisticsPage({ user, onMessage, onError }: StatisticsPageProps
     } finally {
       if (version === requestVersion.current) setLoading(false)
     }
-  }, [onError, user.role])
+  }, [canSearchStudents, isAdmin, onError])
 
   useEffect(() => {
-    void load(0, emptyAdminFilters)
+    void load(0, emptyStatisticsFilters)
   }, [load])
 
   const periods = data?.periodOptions?.length ? data.periodOptions : DEFAULT_PERIODS
-  const statusData = data ? chartData(data.statusCounts) : []
-  const gradeData = data ? chartData(data.gradeDistribution) : []
-  const attendanceData = data ? chartData(data.attendanceDistribution) : []
-  const subjectData = data?.subjectAverages.map((item) => ({
+  const statusData = useMemo(() => (data ? chartData(data.statusCounts) : []), [data])
+  const gradeData = useMemo(() => (data ? chartData(data.gradeDistribution) : []), [data])
+  const attendanceData = useMemo(() => (data ? chartData(data.attendanceDistribution) : []), [data])
+  const subjectData = useMemo(() => data?.subjectAverages.map((item) => ({
     label: item.subject,
     value: Number(item.averageGrade) || 0,
-  })) ?? []
+  })) ?? [], [data])
   const evolution = data?.evolution ?? []
   const savedEvolution = evolution.filter((item) => item.available)
   const availableEvolution = savedEvolution.filter((item) => item.hasVisibleRecords)
@@ -211,19 +228,23 @@ export function StatisticsPage({ user, onMessage, onError }: StatisticsPageProps
   const scopeLabel = data?.scope.label || `Dados visíveis para ${user.role}`
   const source = dataSourcePresentation(data?.dataSource ?? 'atual')
   const hasSavedHistory = data?.hasPeriodSnapshot ?? data?.history?.periodSaved ?? data?.historyAvailable ?? false
+  const previousEvolution = [...availableEvolution]
+    .filter((item) => item.periodIndex < periodIndex)
+    .sort((left, right) => right.periodIndex - left.periodIndex)[0]
 
   function choosePeriod(index: number) {
     setPeriodIndex(index)
     void load(index, appliedFilters)
   }
 
-  function updateFilter(field: keyof AdminStatisticsFilters, value: string) {
+  function updateFilter(field: keyof StatisticsSearchFilters, value: string) {
     setDraftFilters((current) => ({ ...current, [field]: value }))
   }
 
-  function applyAdminFilters(event: React.FormEvent<HTMLFormElement>) {
+  function applyStatisticsFilters(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()
     const nextFilters = {
+      busca_nome: draftFilters.busca_nome.trim(),
       curso: draftFilters.curso.trim(),
       turma: draftFilters.turma.trim(),
       cota: draftFilters.cota.trim(),
@@ -233,14 +254,14 @@ export function StatisticsPage({ user, onMessage, onError }: StatisticsPageProps
     void load(periodIndex, nextFilters)
   }
 
-  function clearAdminFilters() {
-    setDraftFilters(emptyAdminFilters)
-    setAppliedFilters(emptyAdminFilters)
-    void load(periodIndex, emptyAdminFilters)
+  function clearStatisticsFilters() {
+    setDraftFilters(emptyStatisticsFilters)
+    setAppliedFilters(emptyStatisticsFilters)
+    void load(periodIndex, emptyStatisticsFilters)
   }
 
   function handleDownload() {
-    if (!data) return
+    if (!data || !isAdmin) return
     downloadCsv(data)
     onMessage('Relatório de estatísticas baixado em CSV.')
   }
@@ -251,7 +272,7 @@ export function StatisticsPage({ user, onMessage, onError }: StatisticsPageProps
     setGeneratingPdf(true)
     try {
       const { downloadStatisticsPdf } = await import('../utils/statisticsPdf')
-      downloadStatisticsPdf(data, isAdmin ? appliedFilters : {})
+      downloadStatisticsPdf(data, canSearchStudents ? appliedFilters : {})
       onMessage('Relatório de estatísticas baixado em PDF.')
     } catch (downloadError) {
       setError(onError(downloadError))
@@ -313,17 +334,33 @@ export function StatisticsPage({ user, onMessage, onError }: StatisticsPageProps
         ))}
       </div>
 
-      {isAdmin && (
-        <form className="statistics-admin-filters card" onSubmit={applyAdminFilters}>
+      {canSearchStudents && (
+        <form className="statistics-admin-filters card" onSubmit={applyStatisticsFilters}>
           <div className="statistics-filter-heading">
             <div>
-              <p className="eyebrow">Filtros administrativos</p>
-              <h2>Refinar a visão geral</h2>
-              <p className="muted">Estes filtros só estão disponíveis para Administradores e são aplicados aos gráficos, exportações e impressão.</p>
+              <p className="eyebrow">Filtros de consulta</p>
+              <h2>Refinar as estatísticas</h2>
+              <p className="muted">
+                {isAdmin
+                  ? 'Busque por aluno ou refine a visão geral por curso, turma e modalidade de cota.'
+                  : 'Busque por nome somente entre os alunos que pertencem ao seu escopo de acesso.'}
+              </p>
             </div>
-            <span className="statistics-filter-summary">{adminFilterSummary(appliedFilters)}</span>
+            <span className="statistics-filter-summary">{statisticsFilterSummary(appliedFilters)}</span>
           </div>
-          <div className="statistics-filter-fields">
+          <div className={isAdmin ? 'statistics-filter-fields' : 'statistics-filter-fields search-only'}>
+            <label>
+              Nome do aluno
+              <input
+                autoComplete="off"
+                onChange={(event) => updateFilter('busca_nome', event.target.value)}
+                placeholder="Ex.: Maria da Silva"
+                type="search"
+                value={draftFilters.busca_nome}
+              />
+            </label>
+            {isAdmin && (
+              <>
             <label>
               Curso
               <input
@@ -351,9 +388,11 @@ export function StatisticsPage({ user, onMessage, onError }: StatisticsPageProps
                 ))}
               </select>
             </label>
+              </>
+            )}
             <div className="statistics-filter-actions">
               <button className="button button-primary" disabled={loading} type="submit">Aplicar filtros</button>
-              <button className="button button-secondary" disabled={loading || !hasAdminFilters(appliedFilters)} onClick={clearAdminFilters} type="button">Limpar</button>
+              <button className="button button-secondary" disabled={loading || !hasStatisticsFilters(appliedFilters)} onClick={clearStatisticsFilters} type="button">Limpar</button>
             </div>
           </div>
         </form>
@@ -367,6 +406,7 @@ export function StatisticsPage({ user, onMessage, onError }: StatisticsPageProps
           {data && (
             <p className="statistics-source-detail">
               {data.history.historicalStudents} registro(s) histórico(s) e {data.history.liveStudents} registro(s) atual(is) no recorte exibido.
+              {data.currentTimestamp && ` Atualizado em ${data.currentTimestamp}.`}
             </p>
           )}
         </div>
@@ -410,7 +450,9 @@ export function StatisticsPage({ user, onMessage, onError }: StatisticsPageProps
         </div>
         <div className="statistics-actions">
           <button className="button button-secondary" disabled={loading} onClick={() => void load(periodIndex, appliedFilters)} type="button">Atualizar dados</button>
-          <button className="button button-secondary" disabled={!data || loading} onClick={handleDownload} type="button">Baixar CSV</button>
+          {isAdmin && (
+            <button className="button button-secondary" disabled={!data || loading} onClick={handleDownload} type="button">Baixar CSV</button>
+          )}
           <button className="button button-secondary" disabled={!data || loading || generatingPdf} onClick={() => void handleDownloadPdf()} type="button">
             {generatingPdf ? 'Gerando PDF...' : 'Baixar PDF'}
           </button>
@@ -433,22 +475,22 @@ export function StatisticsPage({ user, onMessage, onError }: StatisticsPageProps
             <article className="statistics-metric card">
               <span>Média geral</span>
               <strong>{formatGrade(data.totals.averageGrade)}</strong>
-              <small>escala de 0 a 100</small>
+              <small>{comparisonLabel(data.totals.averageGrade, previousEvolution?.averageGrade, formatGrade)}</small>
             </article>
             <article className="statistics-metric card">
-              <span>Frequência média</span>
+              <span>Média de faltas</span>
               <strong>{formatPercent(data.totals.averageAttendancePercent)}</strong>
-              <small>percentual de faltas</small>
+              <small>{comparisonLabel(data.totals.averageAttendancePercent, previousEvolution?.averageAttendancePercent, formatPercent)}</small>
             </article>
             <article className="statistics-metric statistics-metric-risk card">
               <span>Em risco</span>
               <strong>{formatNumber(data.totals.atRisk)}</strong>
-              <small>requerem acompanhamento</small>
+              <small>{comparisonLabel(data.totals.atRisk, previousEvolution?.atRisk, formatNumber)}</small>
             </article>
             <article className="statistics-metric statistics-metric-warning card">
               <span>Em alerta</span>
               <strong>{formatNumber(data.totals.alert)}</strong>
-              <small>próximos ao limite</small>
+              <small>{comparisonLabel(data.totals.alert, previousEvolution?.alert, formatNumber)}</small>
             </article>
           </section>
 
@@ -536,15 +578,17 @@ export function StatisticsPage({ user, onMessage, onError }: StatisticsPageProps
               <StatisticsChart data={statusData} title="Situação acadêmica" type={chartType} />
             </article>
 
-            <article className="statistics-chart-card card">
-              <div className="statistics-card-heading">
-                <div>
-                  <h2>Faixas de nota</h2>
-                  <p className="muted">Quantidade de alunos por faixa de desempenho.</p>
+            {shouldShowGradeDistribution && (
+              <article className="statistics-chart-card card">
+                <div className="statistics-card-heading">
+                  <div>
+                    <h2>Faixas de nota</h2>
+                    <p className="muted">Quantidade de alunos por faixa de desempenho.</p>
+                  </div>
                 </div>
-              </div>
-              <StatisticsChart data={gradeData} title="Faixas de nota" type={chartType} />
-            </article>
+                <StatisticsChart data={gradeData} title="Faixas de nota" type={chartType} />
+              </article>
+            )}
 
             <article className="statistics-chart-card card">
               <div className="statistics-card-heading">
@@ -560,18 +604,22 @@ export function StatisticsPage({ user, onMessage, onError }: StatisticsPageProps
               <div className="statistics-card-heading">
                 <div>
                   <h2>Média por matéria</h2>
-                  <p className="muted">Notas médias das matérias disponíveis no escopo.</p>
+                  <p className="muted">
+                    {chartType === 'pie'
+                      ? 'Participação proporcional das médias registradas em cada matéria.'
+                      : 'Matérias priorizadas por alunos em risco, alerta e depois média.'}
+                  </p>
                 </div>
               </div>
-              <StatisticsChart data={subjectData} title="Média por matéria" type={chartType} valueLabel={formatGrade} />
+              <StatisticsChart data={subjectData} pieLabelMode="percentages" title="Média por matéria" type={chartType} valueLabel={formatGrade} />
             </article>
           </section>
 
           <section className="statistics-subjects card">
             <div className="section-heading">
               <div>
-                <h2>Detalhamento por matéria</h2>
-                <p className="muted">Resumo numérico que acompanha os gráficos acima.</p>
+                <h2>Prioridades por matéria</h2>
+                <p className="muted">Resumo ordenado para direcionar o acompanhamento acadêmico.</p>
               </div>
             </div>
             {data.subjectAverages.length === 0 ? (

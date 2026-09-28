@@ -12,6 +12,7 @@ interface PermissionsPageProps {
 interface PermissionRowProps {
   user: User
   onSave: (id: number, payload: UserUpdatePayload) => Promise<string>
+  onDelete: (user: User) => Promise<string>
 }
 
 const roles = ['Admin', 'Diretor', 'Professor']
@@ -30,13 +31,14 @@ function usersFrom(data: User[] | { users: User[] }): User[] {
   return Array.isArray(data) ? data : data.users ?? []
 }
 
-function PermissionRow({ user, onSave }: PermissionRowProps) {
+function PermissionRow({ user, onSave, onDelete }: PermissionRowProps) {
   const [role, setRole] = useState(user.role)
   const [curso, setCurso] = useState(user.curso ?? '')
   const [disciplina, setDisciplina] = useState(user.disciplina ?? '')
   const [turma, setTurma] = useState(user.turma ?? '')
   const [error, setError] = useState('')
   const [saving, setSaving] = useState(false)
+  const [deleting, setDeleting] = useState(false)
 
   async function save(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -49,6 +51,24 @@ function PermissionRow({ user, onSave }: PermissionRowProps) {
       setError(requestError instanceof Error ? requestError.message : 'Não foi possível atualizar o usuário.')
     } finally {
       setSaving(false)
+    }
+  }
+
+  async function remove() {
+    const displayName = user.nome || user.username
+    const confirmed = window.confirm(
+      `Excluir a conta de ${user.role} ${displayName}? O acesso será revogado imediatamente e esta ação não poderá ser desfeita.`,
+    )
+    if (!confirmed) return
+
+    setError('')
+    setDeleting(true)
+    try {
+      await onDelete(user)
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : 'Não foi possível excluir o usuário.')
+    } finally {
+      setDeleting(false)
     }
   }
 
@@ -83,7 +103,12 @@ function PermissionRow({ user, onSave }: PermissionRowProps) {
           <input aria-label={`Curso de ${user.username}`} onChange={(event) => setCurso(event.target.value)} placeholder="Curso" value={curso} />
           <input aria-label={`Disciplina de ${user.username}`} onChange={(event) => setDisciplina(event.target.value)} placeholder="Disciplina" value={disciplina} />
           <input aria-label={`Turma de ${user.username}`} onChange={(event) => setTurma(event.target.value)} placeholder="Turma" value={turma} />
-          <button className="button button-primary" disabled={saving} type="submit">{saving ? 'Salvando...' : 'Salvar'}</button>
+          <button className="button button-primary" disabled={saving || deleting} type="submit">{saving ? 'Salvando...' : 'Salvar'}</button>
+          {(user.role === 'Professor' || user.role === 'Diretor') && (
+            <button className="button button-danger" disabled={saving || deleting} onClick={() => void remove()} type="button">
+              {deleting ? 'Excluindo...' : 'Excluir'}
+            </button>
+          )}
           {error && <span className="row-error">{error}</span>}
         </form>
       </td>
@@ -122,6 +147,18 @@ export function PermissionsPage({ onMessage, onError }: PermissionsPageProps) {
       const message = result.message || 'Permissões atualizadas com sucesso.'
       onMessage(message)
       setUsers((current) => current.map((user) => (user.id === id ? result.data : user)))
+      return message
+    } catch (requestError) {
+      throw new Error(onError(requestError))
+    }
+  }
+
+  async function deleteUser(user: User): Promise<string> {
+    try {
+      const result = await api.deleteUser(user.id)
+      const message = result.message || 'Usuário excluído com sucesso.'
+      setUsers((current) => current.filter((item) => item.id !== user.id))
+      onMessage(message)
       return message
     } catch (requestError) {
       throw new Error(onError(requestError))
@@ -269,7 +306,7 @@ export function PermissionsPage({ onMessage, onError }: PermissionsPageProps) {
                 </tr>
               </thead>
               <tbody>
-                {users.map((user) => <PermissionRow key={user.id} onSave={saveUser} user={user} />)}
+                {users.map((user) => <PermissionRow key={user.id} onDelete={deleteUser} onSave={saveUser} user={user} />)}
               </tbody>
             </table>
           </div>

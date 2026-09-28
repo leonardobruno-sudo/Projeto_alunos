@@ -8,6 +8,12 @@ interface SubjectInputsProps {
   onChange: (subjects: SubjectDraft[]) => void
 }
 
+function nonNegativeIntegerLimit(value: string): number | undefined {
+  if (!value.trim()) return undefined
+  const number = Number(value)
+  return Number.isInteger(number) && number >= 0 ? number : undefined
+}
+
 export function SubjectInputs({ subjects, onChange }: SubjectInputsProps) {
   function updateSubject(id: string, field: keyof Omit<SubjectDraft, 'id'>, value: string) {
     onChange(subjects.map((subject) => (subject.id === id ? { ...subject, [field]: value } : subject)))
@@ -33,42 +39,50 @@ export function SubjectInputs({ subjects, onChange }: SubjectInputsProps) {
         <p className="empty-inline">Nenhuma matéria adicionada.</p>
       ) : (
         <div className="subject-input-list">
-          {subjects.map((subject, index) => (
-            <div className="subject-input-card" key={subject.id}>
-              <div className="subject-card-heading">
-                <strong>Matéria {index + 1}</strong>
-                <button className="text-button danger-text" onClick={() => removeSubject(subject.id)} type="button">
-                  Remover
-                </button>
+          {subjects.map((subject, index) => {
+            const totalClasses = nonNegativeIntegerLimit(subject.totalAulas)
+            const absences = nonNegativeIntegerLimit(subject.faltas)
+            const justifiedMaximum = totalClasses !== undefined && absences !== undefined
+              ? Math.min(totalClasses, absences)
+              : undefined
+
+            return (
+              <div className="subject-input-card" key={subject.id}>
+                <div className="subject-card-heading">
+                  <strong>Matéria {index + 1}</strong>
+                  <button className="text-button danger-text" onClick={() => removeSubject(subject.id)} type="button">
+                    Remover
+                  </button>
+                </div>
+                <div className="form-grid subject-fields">
+                  <label className="field-wide">
+                    Nome da matéria
+                    <input
+                      onChange={(event) => updateSubject(subject.id, 'name', event.target.value)}
+                      placeholder="Ex.: Matemática"
+                      value={subject.name}
+                    />
+                  </label>
+                  <label>
+                    Nota
+                    <input max="100" min="0" onChange={(event) => updateSubject(subject.id, 'nota', event.target.value)} step="0.01" type="number" value={subject.nota} />
+                  </label>
+                  <label>
+                    Faltas
+                    <input max={totalClasses} min="0" onChange={(event) => updateSubject(subject.id, 'faltas', event.target.value)} step="1" type="number" value={subject.faltas} />
+                  </label>
+                  <label>
+                    Justificadas
+                    <input max={justifiedMaximum} min="0" onChange={(event) => updateSubject(subject.id, 'faltasJustificadas', event.target.value)} step="1" type="number" value={subject.faltasJustificadas} />
+                  </label>
+                  <label>
+                    Total de aulas
+                    <input min="0" onChange={(event) => updateSubject(subject.id, 'totalAulas', event.target.value)} step="1" type="number" value={subject.totalAulas} />
+                  </label>
+                </div>
               </div>
-              <div className="form-grid subject-fields">
-                <label className="field-wide">
-                  Nome da matéria
-                  <input
-                    onChange={(event) => updateSubject(subject.id, 'name', event.target.value)}
-                    placeholder="Ex.: Matemática"
-                    value={subject.name}
-                  />
-                </label>
-                <label>
-                  Nota
-                  <input max="100" min="0" onChange={(event) => updateSubject(subject.id, 'nota', event.target.value)} step="0.01" type="number" value={subject.nota} />
-                </label>
-                <label>
-                  Faltas
-                  <input min="0" onChange={(event) => updateSubject(subject.id, 'faltas', event.target.value)} step="1" type="number" value={subject.faltas} />
-                </label>
-                <label>
-                  Justificadas
-                  <input max={subject.faltas || undefined} min="0" onChange={(event) => updateSubject(subject.id, 'faltasJustificadas', event.target.value)} step="1" type="number" value={subject.faltasJustificadas} />
-                </label>
-                <label>
-                  Total de aulas
-                  <input min="0" onChange={(event) => updateSubject(subject.id, 'totalAulas', event.target.value)} step="1" type="number" value={subject.totalAulas} />
-                </label>
-              </div>
-            </div>
-          ))}
+            )
+          })}
         </div>
       )}
     </div>

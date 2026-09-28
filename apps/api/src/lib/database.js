@@ -10,7 +10,8 @@
  *   - Apply role-based visibility filtering for students
  *   - Provide helper fetch methods for UI pages and API endpoints
  *
- * Referenced by: src/server.js, src/routes/api.js, src/lib/auth.js and src/scripts/create-admin.js
+ * Referenced by: apps/api/src/server.js, apps/api/src/routes/api.js,
+ * apps/api/src/lib/auth.js and apps/api/src/scripts/create-admin.js
  */
 const sqlite3 = require('sqlite3').verbose();
 const path = require('path');
@@ -28,7 +29,7 @@ const { canAccessStudent } = require('./permissions');
 
 const dbPath = process.env.DATABASE_PATH
   ? path.resolve(process.env.DATABASE_PATH)
-  : path.join(__dirname, '..', '..', 'data', 'escola.db');
+  : path.join(__dirname, '..', '..', '..', '..', 'database', 'escola.db');
 fs.mkdirSync(path.dirname(dbPath), { recursive: true });
 const db = new sqlite3.Database(dbPath, (err) => {
   if (err) {
@@ -110,11 +111,57 @@ function buildSubjectEntriesFromStudent(student, fallbackSubjects = []) {
 function collectSubjectNames(alunos = []) {
   const names = new Set();
   alunos.forEach((student) => {
-    buildSubjectEntriesFromStudent(student, subjects).forEach((entry) => {
+    const entries = Array.isArray(student?.subjects)
+      ? student.subjects
+      : buildSubjectEntriesFromStudent(student, subjects);
+    entries.forEach((entry) => {
       if (entry.name) names.add(entry.name);
     });
   });
   return Array.from(names);
+}
+
+function limitStudentSubjectsByRole(student, user) {
+  if (user?.role !== 'Professor') return student;
+
+  const allowedSubject = normalizeSubjectName(user.disciplina);
+  const entries = Array.isArray(student?.subjects)
+    ? student.subjects
+    : buildSubjectEntriesFromStudent(student, subjects);
+  const visibleSubjects = allowedSubject
+    ? entries.filter((entry) => normalizeSubjectName(entry?.name) === allowedSubject)
+    : [];
+  // Raw JSON and legacy materiaN columns may contain every subject. Remove
+  // them before a professor-facing response is returned, leaving only the
+  // discipline explicitly assigned to that account.
+  const {
+    materias_json: _storedSubjects,
+    materia1: _materia1,
+    materia2: _materia2,
+    materia3: _materia3,
+    materia4: _materia4,
+    materia5: _materia5,
+    materia6: _materia6,
+    materia7: _materia7,
+    ...visibleStudent
+  } = student;
+
+  const assignedEntry = visibleSubjects[0];
+  if (!assignedEntry) return { ...visibleStudent, subjects: [] };
+
+  // A teacher's dashboard and statistics must use the same assigned subject
+  // rather than exposing a student's aggregate from other disciplines.
+  return {
+    ...visibleStudent,
+    nota_final: Number(assignedEntry.nota) || 0,
+    taxa_faltas: Number(assignedEntry.percentual_faltas) || 0,
+    risco_nota: assignedEntry.risco_nota === true,
+    alerta_nota: assignedEntry.alerta_nota === true,
+    risco_faltas: assignedEntry.risco_faltas === true,
+    alerta_faltas: assignedEntry.alerta_faltas === true,
+    situacao_risco: assignedEntry.situacao_risco || 'Regular',
+    subjects: visibleSubjects
+  };
 }
 
 function getMetricStatus(value, riskThreshold, alertDelta = 5) {
@@ -145,8 +192,7 @@ function getFiniteNonNegativeNumber(value) {
   return Number.isFinite(numericValue) && numericValue >= 0 ? numericValue : null;
 }
 
-function calculateRisk(student, periodIndex) {
-  const periodAdjustment = periodIndex * 0.25;
+function calculateRisk(student) {
   const subjectEntries = buildSubjectEntriesFromStudent(student, subjects).map((entry) => {
     const nota = Number(entry.nota) || 0;
     const faltas = Number(entry.faltas) || 0;
@@ -154,12 +200,11 @@ function calculateRisk(student, periodIndex) {
     const totalAulas = Number(entry.total_aulas) || 0;
     const faltasNetas = Math.max(0, faltas - justificadas);
     const taxaFaltasPercent = totalAulas > 0 ? (faltasNetas / totalAulas) * 100 : 0;
-    const adjustedNota = nota + periodAdjustment;
-    const notaStatus = getMetricStatus(adjustedNota, 70, 5);
+    const notaStatus = getMetricStatus(nota, 70, 5);
     const faltasStatus = getAttendanceStatus(taxaFaltasPercent, 25, 5);
     return {
       ...entry,
-      nota: Number(adjustedNota.toFixed(1)),
+      nota: Number(nota.toFixed(1)),
       percentual_faltas: Number(taxaFaltasPercent.toFixed(1)),
       risco_nota: notaStatus.isRisk,
       alerta_nota: notaStatus.isAlert,
@@ -176,7 +221,7 @@ function calculateRisk(student, periodIndex) {
   const storedGrade = getFiniteNonNegativeNumber(student.nota_final);
   const average = storedGrade === null
     ? (subjectAverage ?? 0)
-    : storedGrade + periodAdjustment;
+    : storedGrade;
 
   const subjectTotalAulas = subjectEntries.reduce((sum, entry) => sum + (Number(entry.total_aulas) || 0), 0);
   const subjectTotalFaltas = subjectEntries.reduce((sum, entry) => sum + (Number(entry.faltas) || 0), 0);
@@ -197,10 +242,14 @@ function calculateRisk(student, periodIndex) {
   const taxaFaltasPercent = totalAulas > 0 ? (faltasNetas / totalAulas) * 100 : 0;
   const notaStatus = getMetricStatus(average, 70, 5);
   const faltasStatus = getAttendanceStatus(taxaFaltasPercent, 25, 5);
-  const hasGradeRisk = notaStatus.isRisk || subjectEntries.some((entry) => entry.risco_nota);
-  const hasGradeAlert = notaStatus.isAlert || subjectEntries.some((entry) => entry.alerta_nota);
-  const hasAbsenceRisk = faltasStatus.isRisk || subjectEntries.some((entry) => entry.risco_faltas);
-  const hasAbsenceAlert = faltasStatus.isAlert || subjectEntries.some((entry) => entry.alerta_faltas);
+  // The dashboard displays the overall grade and absence percentage. Its
+  // risk flags must therefore be derived from those same values, rather than
+  // from an unrelated subject. Individual subject flags stay on each entry
+  // and are used by the Matérias view.
+  const hasGradeRisk = notaStatus.isRisk;
+  const hasGradeAlert = notaStatus.isAlert;
+  const hasAbsenceRisk = faltasStatus.isRisk;
+  const hasAbsenceAlert = faltasStatus.isAlert;
   const hasRisk = hasGradeRisk || hasAbsenceRisk;
   const hasAlert = hasGradeAlert || hasAbsenceAlert;
 
@@ -234,14 +283,13 @@ function copyHistoryStudentFields(student) {
 function buildAcademicHistorySnapshot(student, periodIndex) {
   const source = copyHistoryStudentFields(student);
   return {
-    version: 1,
+    version: 2,
     periodIndex,
     capturedAt: new Date().toISOString(),
-    // Keep both the source values and their evaluated result. Source values
-    // make the snapshot auditable; the evaluated result prevents a later
-    // calculation change from rewriting a saved period.
-    student: source,
-    calculated: calculateRisk(source, periodIndex)
+    // The source values are the immutable historical record. The evaluated
+    // status is deliberately derived again when read so a corrected risk rule
+    // cannot leave an old snapshot with inconsistent grades or labels.
+    student: source
   };
 }
 
@@ -253,12 +301,10 @@ function readAcademicHistorySnapshot(row, periodIndex) {
     if (!snapshot?.student || Number(snapshot.periodIndex) !== periodIndex) return null;
     if (!getTextValue(snapshot.student.matricula)) return null;
 
-    // New snapshots persist their evaluated output so the period adjustment
-    // is never applied twice. The fallback supports any earlier raw-only
-    // snapshot format by calculating it exactly once.
-    const student = snapshot.calculated && typeof snapshot.calculated === 'object'
-      ? snapshot.calculated
-      : calculateRisk(snapshot.student, periodIndex);
+    // Older snapshots may contain a calculated block produced by a previous
+    // rule. Recalculate from their immutable source values to keep the grade,
+    // absences and risk label coherent in every period.
+    const student = calculateRisk(snapshot.student);
     return {
       student,
       capturedAt: row.salvo_em || snapshot.capturedAt || null
@@ -295,6 +341,17 @@ async function getHistoryByPeriod(periodIndex) {
   }
 
   return history;
+}
+
+function getLatestSnapshotAt(historyByMatricula) {
+  let latest = null;
+
+  for (const history of historyByMatricula.values()) {
+    const capturedAt = getTextValue(history?.capturedAt);
+    if (capturedAt && (!latest || capturedAt > latest)) latest = capturedAt;
+  }
+
+  return latest;
 }
 
 async function saveAcademicHistoryPeriod(periodIndex, savedBy, { overwrite = false } = {}) {
@@ -375,7 +432,7 @@ function deleteStudentByMatricula(matricula) {
 
 function updateStudentFields(matricula, updates) {
   const allowedColumns = new Set([
-    'telefone', 'cotista', 'cota_detalhada', 'categoria', 'nota_final',
+    'nome', 'telefone', 'cotista', 'cota_detalhada', 'categoria', 'nota_final',
     'taxa_faltas', 'faltas_justificadas', 'total_aulas', 'curso',
     'disciplina', 'turma', 'descricao', 'materias_json', 'materia1',
     'materia2', 'materia3', 'materia4', 'materia5', 'materia6', 'materia7'
@@ -624,6 +681,39 @@ async function deleteSessionsByIds(sessionIds) {
   }
 }
 
+// Staff accounts are distinct from automatic student accounts. This narrow
+// operation is used only by the administrator's Permissions screen and never
+// accepts Admin or Aluno accounts as deletion targets.
+async function deleteStaffUserById(userId) {
+  const normalizedUserId = Number(userId);
+  if (!Number.isInteger(normalizedUserId) || normalizedUserId < 1) return null;
+
+  return withImmediateTransaction(async () => {
+    const user = await getSql(
+      'SELECT id, username, role, matricula, nome, curso, disciplina, turma FROM usuarios WHERE id = ?',
+      [normalizedUserId]
+    );
+    if (!user) return { deleted: false, reason: 'not_found' };
+    if (!['Professor', 'Diretor'].includes(user.role)) {
+      return { deleted: false, reason: 'protected' };
+    }
+
+    const result = await runSql(
+      'DELETE FROM usuarios WHERE id = ? AND role IN (?, ?)',
+      [normalizedUserId, 'Professor', 'Diretor']
+    );
+    if (result.changes !== 1) return { deleted: false, reason: 'not_found' };
+
+    const sessionRows = await allSql('SELECT sid, sess FROM sessoes');
+    const sessionIds = sessionRows
+      .filter((row) => getSessionUserId(row.sess) === normalizedUserId)
+      .map((row) => row.sid);
+    if (sessionIds.length > 0) await deleteSessionsByIds(sessionIds);
+
+    return { deleted: true, user, deletedSessions: sessionIds.length };
+  });
+}
+
 // This function must run inside an already-open immediate transaction. It
 // removes only accounts whose explicit student matrícula no longer matches an
 // active enrollment, case-insensitively. Academic history is deliberately not
@@ -751,7 +841,11 @@ async function backfillStudentAccounts() {
 
 function normalizeSearchText(value) {
   if (typeof value !== 'string' && typeof value !== 'number') return '';
-  return String(value).trim().toLocaleLowerCase('pt-BR');
+  return String(value)
+    .trim()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLocaleLowerCase('pt-BR');
 }
 
 function includesSearchText(value, searchTerm) {
@@ -769,14 +863,90 @@ function matchesAdminFilters(student, filters) {
     matchesExactSearchText(student.cota_detalhada, filters.cota);
 }
 
-async function fetchVisibleStudents(req) {
+function matchesRiskFilter(student, filter) {
+  if (!filter) return true;
+  const status = normalizeSearchText(student.situacao_risco);
+  if (filter === 'risco') return status.includes('risco');
+  if (filter === 'alerta') return status.includes('alerta');
+  if (filter === 'regular') return status.includes('regular');
+  return false;
+}
+
+function scopeSqlForUser(user) {
+  const role = getTextValue(user?.role);
+  if (role === 'Admin') return { where: '', params: [] };
+
+  const normalizedMatricula = getTextValue(user?.matricula);
+  const normalizedCurso = getTextValue(user?.curso);
+  const normalizedDisciplina = getTextValue(user?.disciplina);
+  const normalizedTurma = getTextValue(user?.turma);
+  if (role === 'Aluno' && normalizedMatricula) {
+    return {
+      where: ' WHERE lower(trim(matricula)) = lower(trim(?))',
+      params: [normalizedMatricula]
+    };
+  }
+  if (role === 'Diretor' && normalizedCurso) {
+    return {
+      where: ' WHERE lower(trim(curso)) = lower(trim(?))',
+      params: [normalizedCurso]
+    };
+  }
+  if (role === 'Professor' && normalizedCurso && normalizedDisciplina && normalizedTurma) {
+    return {
+      where: ` WHERE lower(trim(curso)) = lower(trim(?))
+        AND lower(trim(turma)) = lower(trim(?))`,
+      params: [normalizedCurso, normalizedTurma]
+    };
+  }
+  return { where: ' WHERE 1 = 0', params: [] };
+}
+
+async function fetchCurrentStudentsForScope(user) {
+  const scope = scopeSqlForUser(user);
+  return allSql(`SELECT * FROM alunos${scope.where}`, scope.params);
+}
+
+function listOptions(query = {}) {
+  const page = Number(query.page);
+  const pageSize = Number(query.pageSize);
+  const requestedSort = getTextValue(query.sort);
+  const sort = ['nome', 'matricula', 'nota_final', 'taxa_faltas', 'situacao_risco'].includes(requestedSort)
+    ? requestedSort
+    : 'nome';
+  const requestedDirection = getTextValue(query.direction).toLowerCase();
+  return {
+    page: Number.isInteger(page) && page > 0 ? page : 1,
+    pageSize: Number.isInteger(pageSize) && pageSize > 0 && pageSize <= 50 ? pageSize : 20,
+    sort,
+    direction: requestedDirection === 'desc' ? 'desc' : 'asc'
+  };
+}
+
+function compareStudents(left, right, sort, direction) {
+  const factor = direction === 'desc' ? -1 : 1;
+  const leftValue = left?.[sort];
+  const rightValue = right?.[sort];
+  const numericSort = sort === 'nota_final' || sort === 'taxa_faltas';
+  const comparison = numericSort
+    ? (Number(leftValue) || 0) - (Number(rightValue) || 0)
+    : getTextValue(leftValue).localeCompare(getTextValue(rightValue), 'pt-BR', { sensitivity: 'base' });
+  if (comparison !== 0) return comparison * factor;
+  return getTextValue(left?.matricula).localeCompare(getTextValue(right?.matricula), 'pt-BR', { sensitivity: 'base' });
+}
+
+async function fetchVisibleStudents(req, { paginate = false } = {}) {
   const query = req.query || {};
   const requestedPeriod = Number(query.periodo);
   const periodIndex = Number.isInteger(requestedPeriod) && requestedPeriod >= 0 && requestedPeriod < periods.length
     ? requestedPeriod
     : 0;
+  const search = normalizeSearchText(query.q);
   const buscaMatricula = normalizeSearchText(query.busca_matricula);
   const buscaNome = normalizeSearchText(query.busca_nome);
+  const riskFilter = normalizeSearchText(query.situacao);
+  const useCurrentSource = getTextValue(query.fonte).toLocaleLowerCase('pt-BR') === 'atual';
+  const pagination = listOptions(query);
   const isAdmin = req.session?.user?.role === 'Admin';
   const adminFilters = isAdmin
     ? {
@@ -789,30 +959,66 @@ async function fetchVisibleStudents(req) {
 
   const historyByMatricula = await getHistoryByPeriod(periodIndex);
   const periodSaved = historyByMatricula.size > 0;
-  const studentsWithSource = periodSaved
+  const snapshotAt = getLatestSnapshotAt(historyByMatricula);
+  const studentsWithSource = !useCurrentSource && periodSaved
     ? Array.from(historyByMatricula.values()).map((historical) => ({
       student: historical.student,
       source: 'historico',
       capturedAt: historical.capturedAt
     }))
-    : (await allSql('SELECT * FROM alunos')).map((student) => ({
-      student: calculateRisk(student, periodIndex),
+    : (await fetchCurrentStudentsForScope(req.session.user)).map((student) => ({
+      student: calculateRisk(student),
       source: 'atual',
       capturedAt: null
     }));
   const visibleEntries = studentsWithSource.filter(({ student }) => (
     canAccessStudent(req.session.user, student) &&
+    (!search || includesSearchText(student.matricula, search) || includesSearchText(student.nome, search)) &&
     includesSearchText(student.matricula, buscaMatricula) &&
     includesSearchText(student.nome, buscaNome) &&
     matchesAdminFilters(student, adminFilters)
   ));
-  const historicalStudents = visibleEntries.filter((entry) => entry.source === 'historico').length;
-  const liveStudents = visibleEntries.length - historicalStudents;
-  const dataSource = periodSaved ? 'historico' : 'atual';
+  const projectedEntries = visibleEntries.map((entry) => ({
+    ...entry,
+    student: limitStudentSubjectsByRole(entry.student, req.session.user)
+  })).filter(({ student }) => matchesRiskFilter(student, riskFilter));
+  const orderedEntries = projectedEntries.toSorted((left, right) => (
+    compareStudents(left.student, right.student, pagination.sort, pagination.direction)
+  ));
+  // Keep the list rows compact, but provide the complete subject catalog for
+  // the active authorized result set. Calculating it before pagination means
+  // the Matérias screen never loses a discipline that happens to be on a
+  // later page of the search result.
+  const subjectNames = collectSubjectNames(orderedEntries.map((entry) => entry.student));
+  const total = orderedEntries.length;
+  const totalPages = Math.max(1, Math.ceil(total / pagination.pageSize));
+  const page = Math.min(pagination.page, totalPages);
+  const pagedEntries = paginate
+    ? orderedEntries.slice((page - 1) * pagination.pageSize, page * pagination.pageSize)
+    : orderedEntries;
+  const historicalStudents = projectedEntries.filter((entry) => entry.source === 'historico').length;
+  const liveStudents = projectedEntries.length - historicalStudents;
+  const dataSource = !useCurrentSource && periodSaved ? 'historico' : 'atual';
 
   return {
-    alunos: visibleEntries.map((entry) => entry.student),
-    total: visibleEntries.length,
+    alunos: pagedEntries.map((entry) => entry.student),
+    total,
+    page: paginate ? page : 1,
+    pageSize: paginate ? pagination.pageSize : total,
+    totalPages: paginate ? totalPages : 1,
+    hasPreviousPage: paginate && page > 1,
+    hasNextPage: paginate && page < totalPages,
+    sort: pagination.sort,
+    direction: pagination.direction,
+    filters: {
+      q: getTextValue(query.q),
+      situacao: getTextValue(query.situacao),
+      curso: getTextValue(query.curso),
+      turma: getTextValue(query.turma),
+      categoria: getTextValue(query.categoria),
+      cota: getTextValue(query.cota)
+    },
+    subjectNames,
     busca_matricula: getTextValue(query.busca_matricula),
     busca_nome: getTextValue(query.busca_nome),
     periodIndex,
@@ -821,11 +1027,13 @@ async function fetchVisibleStudents(req) {
     historyAvailable: historicalStudents > 0,
     hasPeriodSnapshot: periodSaved,
     dataSource,
+    snapshotAt,
     history: {
       periodSaved,
       historicalStudents,
       liveStudents,
-      dataSource
+      dataSource,
+      snapshotAt
     },
     currentTimestamp: new Date().toLocaleString('pt-BR', {
       day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit'
@@ -854,7 +1062,8 @@ async function fetchHistoricalStudents(req, periodIndex) {
       includesSearchText(student.matricula, buscaMatricula) &&
       includesSearchText(student.nome, buscaNome) &&
       matchesAdminFilters(student, adminFilters)
-    ));
+    ))
+    .map((student) => limitStudentSubjectsByRole(student, req.session.user));
 
   return {
     alunos,
@@ -901,7 +1110,10 @@ async function setupDatabase() {
       curso TEXT,
       disciplina TEXT,
       turma TEXT,
-      session_version INTEGER NOT NULL DEFAULT 0
+      session_version INTEGER NOT NULL DEFAULT 0,
+      foto_perfil BLOB,
+      foto_perfil_tipo TEXT,
+      foto_perfil_versao INTEGER NOT NULL DEFAULT 0
     )`);
 
   await runSql(`CREATE TABLE IF NOT EXISTS movimentacoes (
@@ -968,7 +1180,10 @@ async function setupDatabase() {
       { name: 'curso', definition: 'TEXT' },
       { name: 'disciplina', definition: 'TEXT' },
       { name: 'turma', definition: 'TEXT' },
-      { name: 'session_version', definition: 'INTEGER NOT NULL DEFAULT 0' }
+      { name: 'session_version', definition: 'INTEGER NOT NULL DEFAULT 0' },
+      { name: 'foto_perfil', definition: 'BLOB' },
+      { name: 'foto_perfil_tipo', definition: 'TEXT' },
+      { name: 'foto_perfil_versao', definition: 'INTEGER NOT NULL DEFAULT 0' }
   ]);
 
   // Remove only student accounts that no longer have an enrollment before
@@ -981,6 +1196,14 @@ async function setupDatabase() {
   // ambiguity for all future registrations and CSV imports.
   await runSql(`CREATE UNIQUE INDEX IF NOT EXISTS unique_alunos_matricula_normalizada
     ON alunos (lower(trim(matricula)))`);
+
+  // These indexes support the server-side scope checks used by the list,
+  // statistics and chat modules without exposing the whole student table to
+  // a narrower profile.
+  await runSql(`CREATE INDEX IF NOT EXISTS alunos_escopo_academico_idx
+    ON alunos (lower(trim(curso)), lower(trim(disciplina)), lower(trim(turma)))`);
+  await runSql(`CREATE INDEX IF NOT EXISTS alunos_nome_normalizado_idx
+    ON alunos (lower(trim(nome)))`);
 
   await runSql(`CREATE UNIQUE INDEX IF NOT EXISTS unique_student_account_matricula
     ON usuarios (lower(trim(matricula)))
@@ -1004,7 +1227,7 @@ async function setupDatabase() {
 
 }
 
-async function getVisibleStudentByMatricula(user, matricula, periodIndex = 0) {
+async function getVisibleStudentDataByMatricula(user, matricula, periodIndex = 0, { source = 'periodo' } = {}) {
   const student = await getStudentByMatricula(matricula);
   const [historyRow, periodSnapshot] = await Promise.all([
     getSql(
@@ -1016,14 +1239,27 @@ async function getVisibleStudentByMatricula(user, matricula, periodIndex = 0) {
     getSql('SELECT 1 AS saved FROM historico_academico WHERE periodo = ? LIMIT 1', [periodIndex])
   ]);
   const snapshot = readAcademicHistorySnapshot(historyRow, periodIndex);
+  const useCurrentSource = source === 'atual';
   // Once the period roster is closed, current records absent from it must not
   // leak into historical views. This also still permits a deleted student to
   // be read from their saved snapshot.
-  const visibleStudent = snapshot?.student || (!periodSnapshot && student
-    ? calculateRisk(student, periodIndex)
-    : null);
+  const visibleStudent = useCurrentSource
+    ? (student ? calculateRisk(student) : null)
+    : (snapshot?.student || (!periodSnapshot && student ? calculateRisk(student) : null));
   if (!visibleStudent) return null;
-  return canAccessStudent(user, visibleStudent) ? visibleStudent : null;
+  if (!canAccessStudent(user, visibleStudent)) return null;
+
+  return {
+    student: limitStudentSubjectsByRole(visibleStudent, user),
+    dataSource: useCurrentSource || !snapshot ? 'atual' : 'historico',
+    hasPeriodSnapshot: Boolean(periodSnapshot),
+    snapshotAt: snapshot?.capturedAt || null
+  };
+}
+
+async function getVisibleStudentByMatricula(user, matricula, periodIndex = 0, options = {}) {
+  const data = await getVisibleStudentDataByMatricula(user, matricula, periodIndex, options);
+  return data?.student || null;
 }
 
 function backupDatabase(callback) {
@@ -1046,13 +1282,16 @@ module.exports = {
   setupDatabase,
   backupDatabase,
   buildSubjectEntriesFromStudent,
+  calculateRisk,
   collectSubjectNames,
   fetchVisibleStudents,
   fetchHistoricalStudents,
+  getVisibleStudentDataByMatricula,
   getVisibleStudentByMatricula,
   getStudentByMatricula,
   saveAcademicHistoryPeriod,
   deleteStudentByMatricula,
+  deleteStaffUserById,
   cleanupOrphanStudentAccounts,
   createStudentWithAccount,
   updateStudentFields

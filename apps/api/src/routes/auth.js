@@ -3,24 +3,66 @@
  * password changes with rate limiting on invalid logins.
  */
 const express = require('express');
+const multer = require('multer');
 const router = express.Router();
-const { authenticateUser, changePassword } = require('../lib/auth');
+const {
+  authenticateUser,
+  changePassword,
+  getProfilePhoto,
+  updateProfilePhoto,
+  removeProfilePhoto
+} = require('../lib/auth');
 const { ensureAuth } = require('../lib/helpers');
 const { normalizeLookupValue } = require('../lib/utils');
+const { MAX_PROFILE_PHOTO_SIZE, detectProfilePhotoMime } = require('../lib/profilePhoto');
 const { apiSuccess, apiBadRequest, apiUnauthorized, apiServerError } = require('../lib/apiResponse');
-const { manageRoles } = require('../lib/constants');
+const {
+  canRegisterStudents,
+  canDeleteStudents,
+  canExportCsv,
+  canEditOwnSubject
+} = require('../lib/permissions');
 
 const loginAttempts = new Map();
 const MAX_LOGIN_ATTEMPTS = 5;
 const LOGIN_BLOCK_MS = 15 * 60 * 1000;
+const profilePhotoUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: {
+    fileSize: MAX_PROFILE_PHOTO_SIZE,
+    files: 1,
+    fields: 0
+  }
+});
+
+function receiveProfilePhoto(req, res, next) {
+  profilePhotoUpload.single('foto')(req, res, (error) => {
+    if (!error) return next();
+
+    if (error instanceof multer.MulterError) {
+      if (error.code === 'LIMIT_FILE_SIZE') {
+        return apiBadRequest(res, 'A foto de perfil pode ter no máximo 2 MB.');
+      }
+      return apiBadRequest(res, 'Envie somente uma foto no campo "foto".');
+    }
+
+    return apiBadRequest(res, 'Não foi possível receber a foto de perfil.');
+  });
+}
 
 function getSessionData(user) {
-  const canManageStudents = manageRoles.includes(user.role);
+  // Teachers follow their assigned subject through a dedicated scoped route;
+  // they do not manage the full student enrollment.
+  const canManageStudents = canRegisterStudents(user);
   const canManageUsers = user.role === 'Admin';
   return {
     user,
     capabilities: {
       canManageStudents,
+      canRegisterStudents: canRegisterStudents(user),
+      canDeleteStudents: canDeleteStudents(user),
+      canExportCsv: canExportCsv(user),
+      canEditOwnSubject: canEditOwnSubject(user),
       canBackup: canManageUsers,
       canManageUsers
     }
@@ -99,6 +141,63 @@ router.post('/login', async (req, res) => {
 
 router.get('/me', ensureAuth, (req, res) => {
   return apiSuccess(res, getSessionData(req.session.user));
+});
+
+router.get('/profile/photo', ensureAuth, async (req, res) => {
+  try {
+    const photo = await getProfilePhoto(req.session.user.id);
+    const allowedMimeTypes = new Set(['image/jpeg', 'image/png', 'image/webp']);
+    if (!photo?.foto_perfil || !allowedMimeTypes.has(photo.foto_perfil_tipo)) {
+      return res.status(404).json({
+        success: false,
+        error: { code: 'profile_photo_not_found', message: 'Nenhuma foto de perfil foi cadastrada.' }
+      });
+    }
+
+    res.set({
+      'Cache-Control': 'private, no-cache',
+      'Content-Disposition': 'inline',
+      'Content-Type': photo.foto_perfil_tipo,
+      'X-Content-Type-Options': 'nosniff'
+    });
+    return res.send(photo.foto_perfil);
+  } catch (error) {
+    console.error('Erro ao buscar foto de perfil:', error.stack || error.message || error);
+    return apiServerError(res, 'Não foi possível carregar a foto de perfil.');
+  }
+});
+
+router.put('/profile/photo', ensureAuth, receiveProfilePhoto, async (req, res) => {
+  const photoMimeType = detectProfilePhotoMime(req.file?.buffer);
+  if (!photoMimeType) {
+    return apiBadRequest(res, 'Escolha uma imagem JPEG, PNG ou WebP válida.');
+  }
+
+  try {
+    const updatedUser = await updateProfilePhoto(req.session.user.id, req.file.buffer, photoMimeType);
+    if (!updatedUser) return apiUnauthorized(res, 'Sessão expirada ou inválida.');
+
+    req.session.user = updatedUser;
+    await saveSession(req);
+    return apiSuccess(res, getSessionData(updatedUser), 'Foto de perfil atualizada com sucesso.');
+  } catch (error) {
+    console.error('Erro ao atualizar foto de perfil:', error.stack || error.message || error);
+    return apiServerError(res, 'Não foi possível atualizar a foto de perfil.');
+  }
+});
+
+router.delete('/profile/photo', ensureAuth, async (req, res) => {
+  try {
+    const updatedUser = await removeProfilePhoto(req.session.user.id);
+    if (!updatedUser) return apiUnauthorized(res, 'Sessão expirada ou inválida.');
+
+    req.session.user = updatedUser;
+    await saveSession(req);
+    return apiSuccess(res, getSessionData(updatedUser), 'Foto de perfil removida com sucesso.');
+  } catch (error) {
+    console.error('Erro ao remover foto de perfil:', error.stack || error.message || error);
+    return apiServerError(res, 'Não foi possível remover a foto de perfil.');
+  }
 });
 
 router.post('/logout', (req, res) => {

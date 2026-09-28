@@ -27,6 +27,18 @@ function currentPasswordError() {
   return error;
 }
 
+function hasProfilePhoto(userRow) {
+  if (!userRow) return false;
+  if (userRow.has_profile_photo !== undefined) return Number(userRow.has_profile_photo) === 1;
+  if (Buffer.isBuffer(userRow.foto_perfil)) return userRow.foto_perfil.length > 0;
+  return Boolean(userRow.foto_perfil);
+}
+
+function profilePhotoVersion(userRow) {
+  const version = Number(userRow?.foto_perfil_versao);
+  return Number.isSafeInteger(version) && version >= 0 ? version : 0;
+}
+
 function normalizeUser(userRow) {
   if (!userRow) return null;
   return {
@@ -38,7 +50,9 @@ function normalizeUser(userRow) {
     curso: userRow.curso,
     disciplina: userRow.disciplina,
     turma: userRow.turma,
-    sessionVersion: Number(userRow.session_version) || 0
+    sessionVersion: Number(userRow.session_version) || 0,
+    hasProfilePhoto: hasProfilePhoto(userRow),
+    profilePhotoVersion: profilePhotoVersion(userRow)
   };
 }
 
@@ -205,9 +219,51 @@ async function changePassword(userId, currentPassword, newPassword) {
   return normalizeUser(updatedUser);
 }
 
+async function getProfilePhoto(userId) {
+  return getSql(
+    `SELECT foto_perfil, foto_perfil_tipo, foto_perfil_versao
+     FROM usuarios
+     WHERE id = ?`,
+    [userId]
+  );
+}
+
+async function updateProfilePhoto(userId, photoBuffer, photoMimeType) {
+  const result = await runSql(
+    `UPDATE usuarios
+     SET foto_perfil = ?,
+         foto_perfil_tipo = ?,
+         foto_perfil_versao = COALESCE(foto_perfil_versao, 0) + 1
+     WHERE id = ?`,
+    [photoBuffer, photoMimeType, userId]
+  );
+  if (result.changes !== 1) return null;
+
+  const updatedUser = await getSql('SELECT * FROM usuarios WHERE id = ?', [userId]);
+  return normalizeUser(updatedUser);
+}
+
+async function removeProfilePhoto(userId) {
+  const result = await runSql(
+    `UPDATE usuarios
+     SET foto_perfil = NULL,
+         foto_perfil_tipo = NULL,
+         foto_perfil_versao = COALESCE(foto_perfil_versao, 0) + 1
+     WHERE id = ?`,
+    [userId]
+  );
+  if (result.changes !== 1) return null;
+
+  const updatedUser = await getSql('SELECT * FROM usuarios WHERE id = ?', [userId]);
+  return normalizeUser(updatedUser);
+}
+
 module.exports = {
   authenticateUser,
   changePassword,
+  getProfilePhoto,
+  updateProfilePhoto,
+  removeProfilePhoto,
   normalizeUser,
   getLegacyStudentPassword
 };

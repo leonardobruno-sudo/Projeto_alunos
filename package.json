@@ -1,19 +1,20 @@
 {
   "name": "projeto_alunos",
   "version": "1.0.0",
-  "description": "Sistema de gerenciamento de alunos",
-  "main": "src/server.js",
+  "description": "SGAC — Sistema de Gerenciamento de Alunos Cotistas",
+  "main": "apps/api/src/server.js",
   "engines": {
-    "node": ">=20.17.0"
+    "node": "^20.19.0 || >=22.12.0"
   },
   "scripts": {
-    "start": "node src/server.js",
-    "dev": "node --watch src/server.js",
-    "quickstart": "npm run build && node src/scripts/quickstart.js",
-    "build": "npm --prefix teste-react run build",
-    "test": "node --test test/student-account-cleanup.test.js",
-    "client:dev": "npm --prefix teste-react run dev",
-    "create:admin": "node src/scripts/create-admin.js"
+    "start": "node apps/api/src/server.js",
+    "dev": "node --watch apps/api/src/server.js",
+    "quickstart": "npm run build && node apps/api/src/scripts/quickstart.js",
+    "build": "npm --prefix apps/web run build",
+    "lint": "npm --prefix apps/web run lint",
+    "test": "node --test apps/api/test/student-account-cleanup.test.js apps/api/test/ai-command-controller.test.js apps/api/test/student-subject-catalog.test.js apps/api/test/profile-photo.test.js apps/api/test/academic-risk.test.js apps/api/test/role-permissions.test.js apps/api/test/subject-update-regression.test.js",
+    "client:dev": "npm --prefix apps/web run dev",
+    "create:admin": "node apps/api/src/scripts/create-admin.js"
   },
   "dependencies": {
     "bcryptjs": "^3.0.3",
@@ -24,6 +25,6 @@
     "sqlite3": "^6.0.1"
   },
   "overrides": {
-    "body-parser": "1.20.6"
+    "body-parser": "1.20.8"
   }
 }

@@ -5,7 +5,7 @@ import { QUOTA_OPTIONS } from '../constants/quotas'
 import type { Student, StudentPayload } from '../types'
 import { getErrorMessage } from '../utils/api'
 import { getStudentSubjects } from '../utils/students'
-import { newSubjectDraft, subjectDraftsFrom, subjectsFromDrafts, type SubjectDraft } from '../utils/subjectDrafts'
+import { newSubjectDraft, subjectDraftsFrom, subjectsFromDrafts, validateSubjectDrafts, type SubjectDraft } from '../utils/subjectDrafts'
 import { SubjectInputs } from './SubjectInputs'
 
 interface StudentFormProps {
@@ -15,6 +15,7 @@ interface StudentFormProps {
   onSubmit: (payload: StudentPayload) => Promise<string | void>
   onCancel?: () => void
   onLoadTurmaSubjects?: (turma: string) => Promise<string[]>
+  lockedScopeFields?: Array<'curso' | 'disciplina' | 'turma'>
 }
 
 interface FormState {
@@ -55,6 +56,7 @@ export function StudentForm({
   onSubmit,
   onCancel,
   onLoadTurmaSubjects,
+  lockedScopeFields = [],
 }: StudentFormProps) {
   const [form, setForm] = useState<FormState>(() => buildState(initialStudent))
   const [subjects, setSubjects] = useState<SubjectDraft[]>(() => initialSubjects(initialStudent))
@@ -63,6 +65,9 @@ export function StudentForm({
   const [saving, setSaving] = useState(false)
 
   const isEdit = mode === 'edit'
+  const isScopeFieldLocked = (field: 'curso' | 'disciplina' | 'turma') => (
+    isEdit && lockedScopeFields.includes(field)
+  )
 
   function updateField(field: keyof FormState, value: string) {
     setForm((current) => ({ ...current, [field]: value }))
@@ -89,6 +94,12 @@ export function StudentForm({
 
     if (!form.matricula.trim() || !form.nome.trim() || !form.turma.trim()) {
       setError('Matrícula, nome e turma são obrigatórios.')
+      return
+    }
+
+    const subjectValidationError = validateSubjectDrafts(subjects)
+    if (subjectValidationError) {
+      setError(subjectValidationError)
       return
     }
 
@@ -145,15 +156,31 @@ export function StudentForm({
         </label>
         <label>
           Curso
-          <input onChange={(event) => updateField('curso', event.target.value)} value={form.curso} />
+          <input
+            disabled={isScopeFieldLocked('curso')}
+            onChange={(event) => updateField('curso', event.target.value)}
+            title={isScopeFieldLocked('curso') ? 'Seu perfil define este campo.' : undefined}
+            value={form.curso}
+          />
         </label>
         <label>
           Disciplina
-          <input onChange={(event) => updateField('disciplina', event.target.value)} value={form.disciplina} />
+          <input
+            disabled={isScopeFieldLocked('disciplina')}
+            onChange={(event) => updateField('disciplina', event.target.value)}
+            title={isScopeFieldLocked('disciplina') ? 'Seu perfil define este campo.' : undefined}
+            value={form.disciplina}
+          />
         </label>
         <label>
           Turma
-          <input onChange={(event) => updateField('turma', event.target.value)} required value={form.turma} />
+          <input
+            disabled={isScopeFieldLocked('turma')}
+            onChange={(event) => updateField('turma', event.target.value)}
+            required
+            title={isScopeFieldLocked('turma') ? 'Seu perfil define este campo.' : undefined}
+            value={form.turma}
+          />
         </label>
         <label>
           Categoria

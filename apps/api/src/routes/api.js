@@ -13,19 +13,30 @@ const {
   runSql,
   fetchVisibleStudents,
   fetchHistoricalStudents,
+  buildSubjectEntriesFromStudent,
   collectSubjectNames,
   backupDatabase,
   getStudentByMatricula,
+  getVisibleStudentDataByMatricula,
   getVisibleStudentByMatricula,
   saveAcademicHistoryPeriod,
   createStudentWithAccount,
   deleteStudentByMatricula,
-  updateStudentFields
+  updateStudentFields,
+  deleteStaffUserById
 } = require('../lib/database');
-const { canEditStudent } = require('../lib/permissions');
+const {
+  canEditStudent,
+  canRegisterStudents,
+  canDeleteStudents,
+  canExportCsv,
+  canEditOwnSubject
+} = require('../lib/permissions');
 const { hashPassword, normalizeMatricula, normalizeSubjectName } = require('../lib/utils');
 const { periods, manageRoles } = require('../lib/constants');
 const { ensureAuth } = require('../lib/helpers');
+const studentsController = require('../modules/students/student.controller');
+const { registerChatRoute } = require('../modules/ai');
 const {
   apiSuccess,
   apiCreated,
@@ -80,7 +91,16 @@ function parsePeriod(value) {
     : null;
 }
 
+function parseAcademicDataSource(value) {
+  if (value === undefined || value === '') return 'historico';
+  if (Array.isArray(value)) return null;
+
+  const source = String(value).trim().toLocaleLowerCase('pt-BR');
+  return source === 'atual' || source === 'historico' ? source : null;
+}
+
 const STATISTICS_FILTER_LIMITS = {
+  busca_nome: 120,
   curso: 120,
   turma: 80,
   categoria: 120,
@@ -223,7 +243,12 @@ function buildStatistics(alunos) {
       alert: subject.alert,
       regular: subject.regular
     }))
-    .sort((left, right) => left.subject.localeCompare(right.subject, 'pt-BR'));
+    .sort((left, right) => (
+      right.atRisk - left.atRisk ||
+      right.alert - left.alert ||
+      left.averageGrade - right.averageGrade ||
+      left.subject.localeCompare(right.subject, 'pt-BR')
+    ));
 
   return {
     totals: {
@@ -287,8 +312,8 @@ function validateSubjects(rawSubjects) {
     if (!Number.isFinite(nota) || nota < 0 || nota > 100) {
       return { error: `A nota de ${name} deve estar entre 0 e 100.` };
     }
-    if (![faltas, faltasJustificadas, totalAulas].every(Number.isInteger) || faltas < 0 || faltasJustificadas < 0 || totalAulas < 0) {
-      return { error: `Faltas e aulas de ${name} devem ser números inteiros não negativos.` };
+    if (!hasValidAttendanceValues(faltas, faltasJustificadas, totalAulas)) {
+      return { error: `Faltas, justificadas e aulas de ${name} devem ser inteiros não negativos; justificadas não podem exceder faltas, nem faltas podem exceder aulas.` };
     }
     knownSubjects.add(normalizedName);
     subjects.push({
@@ -303,15 +328,24 @@ function validateSubjects(rawSubjects) {
   return { subjects };
 }
 
-function getStudentMetrics(subjects, currentStudent = null) {
+function hasValidAttendanceValues(faltas, faltasJustificadas, totalAulas) {
+  if (![faltas, faltasJustificadas, totalAulas].every(Number.isInteger)) return false;
+  if (faltas < 0 || faltasJustificadas < 0 || totalAulas < 0) return false;
+  if (faltasJustificadas > faltas) return false;
+  // A zero workload only represents a subject with no class or absence
+  // registered yet. Any recorded absence needs a real denominator.
+  return faltas === 0 || (totalAulas > 0 && faltas <= totalAulas);
+}
+
+function getStudentMetrics(subjects, currentStudent = null, { preserveLegacySharedWorkload = false } = {}) {
   if (subjects.length === 0) {
     return { nota_final: 0, taxa_faltas: 0, faltas_justificadas: 0, total_aulas: 0 };
   }
 
   const totalAulas = subjects.reduce((sum, subject) => sum + subject.total_aulas, 0);
   const storedTotalAulas = getNumber(currentStudent?.total_aulas, NaN);
-  const usesLegacySharedWorkload = Number.isInteger(storedTotalAulas) && storedTotalAulas > 0 &&
-    subjects.length > 1 && subjects.every((subject) => subject.total_aulas === storedTotalAulas);
+  const usesLegacySharedWorkload = preserveLegacySharedWorkload || (Number.isInteger(storedTotalAulas) && storedTotalAulas > 0 &&
+    subjects.length > 1 && subjects.every((subject) => subject.total_aulas === storedTotalAulas));
 
   return {
     nota_final: Number((subjects.reduce((sum, subject) => sum + subject.nota, 0) / subjects.length).toFixed(1)),
@@ -323,6 +357,81 @@ function getStudentMetrics(subjects, currentStudent = null) {
   };
 }
 
+function buildProfessorSubjectUpdate(body, currentStudent, user, subjectName) {
+  if (!canEditOwnSubject(user)) {
+    return { forbidden: true, error: 'Seu perfil não possui uma disciplina configurada para edição.' };
+  }
+
+  const requestedSubject = normalizeSubjectName(subjectName);
+  const assignedSubject = normalizeSubjectName(user.disciplina);
+  if (!requestedSubject || requestedSubject !== assignedSubject) {
+    return { forbidden: true, error: 'Você só pode editar a matéria atribuída ao seu perfil.' };
+  }
+  if (!body || typeof body !== 'object' || Array.isArray(body)) {
+    return { error: 'Informe os dados da matéria.' };
+  }
+
+  const allowedFields = new Set(['nota', 'faltas', 'faltas_justificadas', 'total_aulas']);
+  if (Object.keys(body).some((field) => !allowedFields.has(field))) {
+    return { forbidden: true, error: 'Professor só pode alterar nota e faltas da própria matéria.' };
+  }
+
+  const nota = getNumber(body.nota, NaN);
+  const faltas = getNumber(body.faltas, NaN);
+  const faltasJustificadas = getNumber(body.faltas_justificadas, NaN);
+  const totalAulas = getNumber(body.total_aulas, NaN);
+  if (!Number.isFinite(nota) || nota < 0 || nota > 100) {
+    return { error: 'A nota deve estar entre 0 e 100.' };
+  }
+  if (!hasValidAttendanceValues(faltas, faltasJustificadas, totalAulas)) {
+    return { error: 'Faltas, justificadas e total de aulas devem ser inteiros não negativos; justificadas não podem exceder faltas, nem faltas podem exceder aulas.' };
+  }
+
+  const storedSubjects = getStoredSubjects(currentStudent);
+  const currentSubjects = storedSubjects.length > 0
+    ? storedSubjects
+    : buildSubjectEntriesFromStudent(currentStudent);
+  const subjectIndex = currentSubjects.findIndex((subject) => (
+    normalizeSubjectName(subject?.name) === assignedSubject
+  ));
+  if (subjectIndex < 0) {
+    return { forbidden: true, error: 'Esta matéria não está disponível para edição neste aluno.' };
+  }
+
+  const updatedSubjects = currentSubjects.map((subject, index) => (
+    index === subjectIndex
+      ? {
+        ...subject,
+        name: subject.name,
+        nota,
+        faltas,
+        faltas_justificadas: faltasJustificadas,
+        total_aulas: totalAulas
+      }
+      : subject
+  ));
+  const metrics = getStudentMetrics(updatedSubjects, currentStudent, {
+    // Legacy rows duplicated one student-level workload on every subject.
+    // Inspect the untouched record, because editing only one subject makes
+    // the updated array mixed and must not turn the aggregate into a sum.
+    preserveLegacySharedWorkload: hasLegacySharedWorkload(currentStudent)
+  });
+
+  return {
+    fields: {
+      materias_json: JSON.stringify(updatedSubjects),
+      materia1: updatedSubjects[0]?.nota || 0,
+      materia2: updatedSubjects[1]?.nota || 0,
+      materia3: updatedSubjects[2]?.nota || 0,
+      materia4: updatedSubjects[3]?.nota || 0,
+      materia5: updatedSubjects[4]?.nota || 0,
+      materia6: updatedSubjects[5]?.nota || 0,
+      materia7: updatedSubjects[6]?.nota || 0,
+      ...metrics
+    }
+  };
+}
+
 function getStoredSubjects(student) {
   if (!student?.materias_json) return [];
   try {
@@ -331,6 +440,19 @@ function getStoredSubjects(student) {
   } catch (_error) {
     return [];
   }
+}
+
+function hasLegacySharedWorkload(student) {
+  const storedTotalAulas = getNumber(student?.total_aulas, NaN);
+  if (!Number.isInteger(storedTotalAulas) || storedTotalAulas <= 0) return false;
+
+  const storedSubjects = getStoredSubjects(student);
+  const originalSubjects = storedSubjects.length > 0
+    ? storedSubjects
+    : buildSubjectEntriesFromStudent(student);
+  return originalSubjects.length > 1 && originalSubjects.every((subject) => (
+    getNumber(subject?.total_aulas, NaN) === storedTotalAulas
+  ));
 }
 
 function buildStudentFields(body, currentStudent = null) {
@@ -416,6 +538,16 @@ function getNewStudentData(body, user) {
   if (!fields) return { error: 'Seu perfil não possui escopo acadêmico configurado.', forbidden: true };
 
   return { matricula, fields };
+}
+
+function editableStudentResponse(student) {
+  const { materias_json: _storedSubjects, ...studentFields } = student;
+  return {
+    ...studentFields,
+    // This endpoint is purposely separate from the period/report DTOs.
+    // It returns the original academic values, never a view-only adjustment.
+    subjects: buildSubjectEntriesFromStudent(student)
+  };
 }
 
 function getImportScopeError(row, user) {
@@ -557,26 +689,33 @@ router.get('/estatisticas', ensureAuth, async (req, res) => {
   const filterResult = parseStatisticsFilters(req.query);
   if (filterResult.error) return apiBadRequest(res, filterResult.error);
 
-  // Extra filters are an Admin convenience only. Other profiles always use
-  // their server-side scope and cannot narrow or widen it through this route.
-  const adminFilters = req.session.user.role === 'Admin' ? filterResult.filters : {};
+  // A name search helps staff find a student inside the records they already
+  // have permission to view. Course, class and quota filters remain an Admin
+  // convenience; no client-supplied filter can widen the server-side scope.
+  const role = req.session.user.role;
+  const statisticsFilters = role === 'Admin'
+    ? filterResult.filters
+    : (role === 'Professor' || role === 'Diretor')
+      ? { busca_nome: filterResult.filters.busca_nome }
+      : {};
 
   try {
-    const statisticsQuery = { periodo: periodIndex, ...adminFilters };
+    const statisticsQuery = { periodo: periodIndex, ...statisticsFilters };
     const [data, evolution] = await Promise.all([
       fetchVisibleStudents({ query: statisticsQuery, session: req.session }),
-      buildHistoryEvolution(req.session, adminFilters)
+      buildHistoryEvolution(req.session, statisticsFilters)
     ]);
     return apiSuccess(res, {
       periodIndex: data.periodIndex,
       currentPeriodName: data.currentPeriodName,
       periodOptions: data.periodOptions,
       scope: getStatisticsScope(req.session.user),
-      filters: adminFilters,
+      filters: statisticsFilters,
       historyAvailable: data.historyAvailable,
       hasPeriodSnapshot: data.hasPeriodSnapshot,
       dataSource: data.dataSource,
       history: data.history,
+      currentTimestamp: data.currentTimestamp,
       evolution,
       ...buildStatistics(data.alunos)
     });
@@ -617,24 +756,11 @@ router.post('/periodos/:periodo/historico', ensureAuth, async (req, res) => {
   }
 });
 
-router.get('/alunos', ensureAuth, async (req, res) => {
-  const periodIndex = parsePeriod(req.query.periodo);
-  if (periodIndex === null) return apiBadRequest(res, 'Período inválido.');
-
-  try {
-    const data = await fetchVisibleStudents({
-      query: { ...req.query, periodo: periodIndex },
-      session: req.session
-    });
-    return apiSuccess(res, data);
-  } catch (error) {
-    console.error('Erro ao buscar alunos:', error.stack || error.message || error);
-    return apiServerError(res, 'Erro ao buscar alunos.');
-  }
-});
+router.get('/alunos', ensureAuth, studentsController.list);
+registerChatRoute(router);
 
 router.get('/alunos/modelo.csv', ensureAuth, (req, res) => {
-  if (!hasStudentManagementAccess(req.session.user)) {
+  if (!canExportCsv(req.session.user)) {
     return apiForbidden(res, 'Você não tem permissão para baixar o modelo de importação.');
   }
 
@@ -646,7 +772,7 @@ router.get('/alunos/modelo.csv', ensureAuth, (req, res) => {
 });
 
 router.post('/alunos/importar', ensureAuth, uploadStudentCsv, async (req, res) => {
-  if (!hasStudentManagementAccess(req.session.user)) {
+  if (!canExportCsv(req.session.user)) {
     return apiForbidden(res, 'Você não tem permissão para importar alunos.');
   }
   if (!req.file) return apiBadRequest(res, 'Envie um arquivo CSV no campo "arquivo".');
@@ -717,14 +843,50 @@ router.post('/alunos/importar', ensureAuth, uploadStudentCsv, async (req, res) =
     `Importação concluída: ${summary.imported} importado(s), ${summary.skipped} ignorado(s) e ${summary.errors} com erro.`);
 });
 
+router.get('/alunos/:matricula/edicao', ensureAuth, async (req, res) => {
+  if (!hasStudentManagementAccess(req.session.user)) {
+    return apiForbidden(res, 'Você não tem permissão para editar alunos.');
+  }
+  if (req.session.user.role === 'Professor') {
+    return apiForbidden(res, 'Professor só pode editar a própria matéria na aba Matérias.');
+  }
+
+  try {
+    const aluno = await getStudentByMatricula(getText(req.params.matricula));
+    if (!aluno) return apiNotFound(res, 'Aluno não encontrado.');
+    if (!canEditStudent(req.session.user, aluno)) {
+      return apiForbidden(res, 'Você não pode editar este aluno.');
+    }
+    return apiSuccess(res, { aluno: editableStudentResponse(aluno) });
+  } catch (error) {
+    console.error('Erro ao abrir cadastro para edição:', error.stack || error.message || error);
+    return apiServerError(res, 'Não foi possível abrir o cadastro do aluno.');
+  }
+});
+
 router.get('/alunos/:matricula', ensureAuth, async (req, res) => {
   const periodIndex = parsePeriod(req.query.periodo);
   if (periodIndex === null) return apiBadRequest(res, 'Período inválido.');
+  const source = parseAcademicDataSource(req.query.fonte);
+  if (source === null) return apiBadRequest(res, 'Fonte de dados inválida.');
 
   try {
-    const aluno = await getVisibleStudentByMatricula(req.session.user, getText(req.params.matricula), periodIndex);
-    if (!aluno) return apiNotFound(res, 'Aluno não encontrado.');
-    return apiSuccess(res, { aluno });
+    const data = await getVisibleStudentDataByMatricula(
+      req.session.user,
+      getText(req.params.matricula),
+      periodIndex,
+      { source }
+    );
+    if (!data) return apiNotFound(res, 'Aluno não encontrado.');
+    return apiSuccess(res, {
+      aluno: data.student,
+      dataSource: data.dataSource,
+      hasPeriodSnapshot: data.hasPeriodSnapshot,
+      snapshotAt: data.snapshotAt,
+      periodIndex,
+      currentPeriodName: periods[periodIndex],
+      periodOptions: periods
+    });
   } catch (error) {
     console.error('Erro ao buscar aluno:', error.stack || error.message || error);
     return apiServerError(res, 'Erro ao buscar aluno.');
@@ -732,7 +894,7 @@ router.get('/alunos/:matricula', ensureAuth, async (req, res) => {
 });
 
 router.post('/alunos', ensureAuth, async (req, res) => {
-  if (!hasStudentManagementAccess(req.session.user)) {
+  if (!canRegisterStudents(req.session.user)) {
     return apiForbidden(res, 'Você não tem permissão para cadastrar alunos.');
   }
 
@@ -748,7 +910,7 @@ router.post('/alunos', ensureAuth, async (req, res) => {
     if (existingStudent) return apiConflict(res, 'Já existe um aluno com esta matrícula.');
 
     await createStudentWithAccount({ matricula: studentData.matricula, ...studentData.fields });
-    const aluno = await getVisibleStudentByMatricula(req.session.user, studentData.matricula);
+    const aluno = await getVisibleStudentByMatricula(req.session.user, studentData.matricula, 0, { source: 'atual' });
     return apiCreated(res, { aluno }, 'Aluno e conta de acesso cadastrados com sucesso.');
   } catch (error) {
     const accountError = getStudentAccountProvisionError(error);
@@ -764,6 +926,9 @@ async function updateStudent(req, res) {
   if (!hasStudentManagementAccess(req.session.user)) {
     return apiForbidden(res, 'Você não tem permissão para editar alunos.');
   }
+  if (req.session.user.role === 'Professor') {
+    return apiForbidden(res, 'Professor só pode editar nota e faltas da própria matéria na aba Matérias.');
+  }
 
   const matricula = getText(req.params.matricula);
   try {
@@ -775,9 +940,13 @@ async function updateStudent(req, res) {
     if (built.error) return apiBadRequest(res, built.error);
     const fields = scopeStudentFields(built.fields, req.session.user);
     if (!fields) return apiForbidden(res, 'Seu perfil não possui escopo acadêmico configurado.');
+    if (!fields.nome || !fields.turma) {
+      return apiBadRequest(res, 'Nome e turma são obrigatórios.');
+    }
 
     await updateStudentFields(matricula, fields);
-    const aluno = await getVisibleStudentByMatricula(req.session.user, matricula);
+    const updatedStudent = await getStudentByMatricula(matricula);
+    const aluno = updatedStudent ? editableStudentResponse(updatedStudent) : null;
     return apiSuccess(res, { aluno }, 'Aluno atualizado com sucesso.');
   } catch (error) {
     console.error('Erro ao atualizar aluno:', error.stack || error.message || error);
@@ -788,8 +957,42 @@ async function updateStudent(req, res) {
 router.patch('/alunos/:matricula', ensureAuth, updateStudent);
 router.put('/alunos/:matricula', ensureAuth, updateStudent);
 
+router.patch('/alunos/:matricula/materias/:subject', ensureAuth, async (req, res) => {
+  if (req.session.user.role !== 'Professor') {
+    return apiForbidden(res, 'Esta atualização é exclusiva do professor responsável pela matéria.');
+  }
+
+  const matricula = getText(req.params.matricula);
+  try {
+    const currentStudent = await getStudentByMatricula(matricula);
+    if (!currentStudent) return apiNotFound(res, 'Aluno não encontrado.');
+    if (!canEditStudent(req.session.user, currentStudent)) {
+      return apiForbidden(res, 'Você não pode editar este aluno nesta matéria.');
+    }
+
+    const update = buildProfessorSubjectUpdate(
+      req.body,
+      currentStudent,
+      req.session.user,
+      getText(req.params.subject)
+    );
+    if (update.error) {
+      return update.forbidden
+        ? apiForbidden(res, update.error)
+        : apiBadRequest(res, update.error);
+    }
+
+    await updateStudentFields(matricula, update.fields);
+    const aluno = await getVisibleStudentByMatricula(req.session.user, matricula, 0, { source: 'atual' });
+    return apiSuccess(res, { aluno }, 'Matéria atualizada com sucesso.');
+  } catch (error) {
+    console.error('Erro ao atualizar matéria do professor:', error.stack || error.message || error);
+    return apiServerError(res, 'Não foi possível atualizar a matéria.');
+  }
+});
+
 router.delete('/alunos/:matricula', ensureAuth, async (req, res) => {
-  if (!hasStudentManagementAccess(req.session.user)) {
+  if (!canDeleteStudents(req.session.user)) {
     return apiForbidden(res, 'Você não tem permissão para excluir alunos.');
   }
 
@@ -808,7 +1011,7 @@ router.delete('/alunos/:matricula', ensureAuth, async (req, res) => {
 });
 
 router.patch('/alunos/:matricula/movimentacao', ensureAuth, async (req, res) => {
-  if (!hasStudentManagementAccess(req.session.user)) {
+  if (!canRegisterStudents(req.session.user)) {
     return apiForbidden(res, 'Você não tem permissão para movimentar alunos.');
   }
 
@@ -828,7 +1031,7 @@ router.patch('/alunos/:matricula/movimentacao', ensureAuth, async (req, res) => 
     if (!fields) return apiForbidden(res, 'Seu perfil não possui escopo acadêmico configurado.');
 
     await updateStudentFields(matricula, fields);
-    const aluno = await getVisibleStudentByMatricula(req.session.user, matricula);
+    const aluno = await getVisibleStudentByMatricula(req.session.user, matricula, 0, { source: 'atual' });
     return apiSuccess(res, { aluno }, 'Aluno movimentado com sucesso.');
   } catch (error) {
     console.error('Erro ao movimentar aluno:', error.stack || error.message || error);
@@ -841,7 +1044,10 @@ router.get('/turma-materias', ensureAuth, async (req, res) => {
   if (!turma) return apiBadRequest(res, 'Informe a turma.');
 
   try {
-    const data = await fetchVisibleStudents({ query: {}, session: req.session });
+    // This catalog is used to populate an editable enrollment form. It must
+    // reflect the current curriculum even when the selected academic period
+    // already has a closed snapshot.
+    const data = await fetchVisibleStudents({ query: { fonte: 'atual' }, session: req.session });
     const alunosDaTurma = data.alunos.filter((aluno) => aluno.turma === turma);
     return apiSuccess(res, collectSubjectNames(alunosDaTurma));
   } catch (error) {
@@ -853,6 +1059,8 @@ router.get('/turma-materias', ensureAuth, async (req, res) => {
 router.get('/materia/:index', ensureAuth, async (req, res) => {
   const periodIndex = parsePeriod(req.query.periodo);
   if (periodIndex === null) return apiBadRequest(res, 'Período inválido.');
+  const source = parseAcademicDataSource(req.query.fonte);
+  if (source === null) return apiBadRequest(res, 'Fonte de dados inválida.');
 
   try {
     const data = await fetchVisibleStudents({
@@ -891,7 +1099,10 @@ router.get('/materia/:index', ensureAuth, async (req, res) => {
       canManageStudents: hasStudentManagementAccess(req.session.user),
       currentPeriodName: data.currentPeriodName,
       periodIndex: data.periodIndex,
-      periodOptions: data.periodOptions
+      periodOptions: data.periodOptions,
+      dataSource: data.dataSource,
+      hasPeriodSnapshot: data.hasPeriodSnapshot,
+      snapshotAt: data.snapshotAt
     });
   } catch (error) {
     console.error('Erro ao carregar matéria:', error.stack || error.message || error);
@@ -1041,6 +1252,31 @@ router.put('/usuarios/:id', ensureAuth, async (req, res) => {
   } catch (error) {
     console.error('Erro ao atualizar permissões:', error.stack || error.message || error);
     return apiServerError(res, 'Não foi possível atualizar as permissões.');
+  }
+});
+
+router.delete('/usuarios/:id', ensureAuth, async (req, res) => {
+  if (req.session.user.role !== 'Admin') return apiForbidden(res, 'Permissão negada.');
+
+  const userId = Number(req.params.id);
+  if (!Number.isInteger(userId) || userId < 1) {
+    return apiBadRequest(res, 'Identificador de usuário inválido.');
+  }
+
+  try {
+    const result = await deleteStaffUserById(userId);
+    if (!result || result.reason === 'not_found') return apiNotFound(res, 'Usuário não encontrado.');
+    if (!result.deleted || result.reason === 'protected') {
+      return apiBadRequest(res, 'Somente contas de Professor ou Diretor podem ser excluídas nesta tela.');
+    }
+
+    const sessionDetail = result.deletedSessions > 0
+      ? ` ${result.deletedSessions} sessão(ões) ativa(s) também foram encerradas.`
+      : '';
+    return apiSuccess(res, null, `Conta de ${result.user.role} removida com sucesso.${sessionDetail}`);
+  } catch (error) {
+    console.error('Erro ao remover conta de equipe:', error.stack || error.message || error);
+    return apiServerError(res, 'Não foi possível remover a conta.');
   }
 });
 

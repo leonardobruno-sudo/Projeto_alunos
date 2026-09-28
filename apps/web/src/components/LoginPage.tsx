@@ -35,7 +35,7 @@ export function LoginPage({ onLogin }: LoginPageProps) {
         <div className="login-brand">
           <span className="brand-mark" aria-hidden="true" />
           <span className="login-brand-name">
-            Sistema de Alunos Cotistas <span className="brand-acronym">(SAC)</span>
+            Sistema de Gerenciamento de Alunos Cotistas <span className="brand-acronym">(SGAC)</span>
           </span>
         </div>
         <h1 id="login-title">Login</h1>

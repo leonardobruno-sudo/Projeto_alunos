@@ -1,7 +1,9 @@
 /** Responsabilidade: fornece o layout autenticado, navegação lateral e ações da sessão. */
 
 import type { ReactNode } from 'react'
-import { canManageStudents, type PageKey, type User } from '../types'
+import { ProfileAvatar } from './ProfileAvatar'
+import { canRegisterStudents, type PageKey, type User } from '../types'
+import { getProfilePhotoUrl } from '../utils/profilePhoto'
 
 interface AppShellProps {
   user: User
@@ -9,15 +11,16 @@ interface AppShellProps {
   theme: 'light' | 'dark'
   loggingOut: boolean
   onNavigate: (page: PageKey) => void
+  onOpenChat: () => void
   onToggleTheme: () => void
   onLogout: () => void
   children: ReactNode
 }
 
-const navigationItems: Array<{ page: PageKey; label: string; adminOnly?: boolean; managerOnly?: boolean }> = [
+const navigationItems: Array<{ page: PageKey; label: string; adminOnly?: boolean; registrationOnly?: boolean }> = [
   { page: 'dashboard', label: 'Dashboard' },
   { page: 'estatisticas', label: 'Estatísticas' },
-  { page: 'cadastro', label: 'Cadastro', managerOnly: true },
+  { page: 'cadastro', label: 'Cadastro', registrationOnly: true },
   { page: 'materias', label: 'Matérias' },
   { page: 'periodos', label: 'Períodos' },
   { page: 'configuracoes', label: 'Configurações' },
@@ -30,20 +33,23 @@ export function AppShell({
   theme,
   loggingOut,
   onNavigate,
+  onOpenChat,
   onToggleTheme,
   onLogout,
   children,
 }: AppShellProps) {
   const name = user.nome || user.username
+  const photoUrl = getProfilePhotoUrl(user)
 
   return (
     <div className="app-layout">
+      <a className="skip-link" href="#main-content">Pular para o conteúdo principal</a>
       <aside className="sidebar">
         <div className="brand">
           <span className="brand-mark" aria-hidden="true" />
           <div>
             <strong>
-              Sistema de Alunos Cotistas <span className="brand-acronym">(SAC)</span>
+              Sistema de Gerenciamento de Alunos Cotistas <span className="brand-acronym">(SGAC)</span>
             </strong>
             <span>Painel de {user.role}</span>
           </div>
@@ -52,9 +58,10 @@ export function AppShell({
         <nav className="main-nav" aria-label="Navegação principal">
           {navigationItems
             .filter((item) => !item.adminOnly || user.role === 'Admin')
-            .filter((item) => !item.managerOnly || canManageStudents(user))
+            .filter((item) => !item.registrationOnly || canRegisterStudents(user))
             .map((item) => (
               <button
+                aria-current={page === item.page ? 'page' : undefined}
                 className={page === item.page ? 'nav-item active' : 'nav-item'}
                 key={item.page}
                 onClick={() => onNavigate(item.page)}
@@ -67,9 +74,15 @@ export function AppShell({
 
         <div className="sidebar-footer">
           <div className="profile-card">
-            <strong>{name}</strong>
-            <span>{user.role}</span>
+            <ProfileAvatar className="profile-avatar-sidebar" name={name} photoUrl={photoUrl} username={user.username} />
+            <div className="profile-card-details">
+              <strong>{name}</strong>
+              <span>{user.role}</span>
+            </div>
           </div>
+          <button className="button button-assistant sidebar-action" onClick={onOpenChat} type="button">
+            Assistente SGAC
+          </button>
           <button className="button button-secondary sidebar-action" onClick={onToggleTheme} type="button">
             {theme === 'dark' ? 'Usar tema claro' : 'Usar tema escuro'}
           </button>
@@ -79,7 +92,7 @@ export function AppShell({
         </div>
       </aside>
 
-      <main className="content-area">{children}</main>
+      <main className="content-area" id="main-content" tabIndex={-1}>{children}</main>
     </div>
   )
 }

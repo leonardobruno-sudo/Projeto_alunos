@@ -2,3 +2,12 @@ node_modules/
 npm-debug.log*
 .DS_Store
 .vscode/
+apps/web/dist/
+.tmp_relatorio_*/
+__pycache__/
+*.py[cod]
+
+# Cada instalação mantém seu próprio SQLite e backup. Nunca versionar dados
+# acadêmicos, sessões ou fotos de perfil de um ambiente local.
+/database/*
+!/database/.gitkeep

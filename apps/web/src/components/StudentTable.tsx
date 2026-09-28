@@ -1,16 +1,19 @@
 /** Responsabilidade: apresenta a lista de alunos, suas descrições e as ações permitidas. */
 
-import { useEffect, useRef, useState } from 'react'
+import { useState } from 'react'
 import type { Student } from '../types'
 import { getStudentStatus } from '../utils/students'
+import { useAccessibleDialog } from '../utils/useAccessibleDialog'
 
 interface StudentTableProps {
   students: Student[]
-  canManageStudents: boolean
+  canEdit?: boolean
+  canDelete?: boolean
   loading?: boolean
   emptyLabel?: string
   gradeLabel?: string
   absenceLabel?: string
+  editLabel?: string
   onEdit?: (student: Student) => void
   onDelete?: (student: Student) => void
 }
@@ -18,6 +21,19 @@ interface StudentTableProps {
 function displayNumber(value: number | null | undefined): string {
   if (value === null || value === undefined || Number.isNaN(Number(value))) return '—'
   return String(value)
+}
+
+type AcademicValueTone = 'normal' | 'risk' | 'unknown'
+
+function academicValueTone(value: number | null | undefined, isAtRisk: boolean): AcademicValueTone {
+  if (value === null || value === undefined || Number.isNaN(Number(value))) return 'unknown'
+  return isAtRisk ? 'risk' : 'normal'
+}
+
+function academicValueTitle(metric: 'grade' | 'absence', tone: AcademicValueTone): string {
+  if (tone === 'unknown') return metric === 'grade' ? 'Nota indisponível' : 'Faltas indisponíveis'
+  if (metric === 'grade') return tone === 'risk' ? 'Nota abaixo da média acadêmica' : 'Nota dentro da média acadêmica'
+  return tone === 'risk' ? 'Faltas acima do limite acadêmico' : 'Faltas dentro do limite acadêmico'
 }
 
 function statusClass(status: string): string {
@@ -38,33 +54,19 @@ function descriptionPreview(description: string): string {
 
 export function StudentTable({
   students,
-  canManageStudents,
+  canEdit = false,
+  canDelete = false,
   loading = false,
   emptyLabel = 'Nenhum aluno encontrado para os filtros selecionados.',
   gradeLabel = 'Nota final',
   absenceLabel = 'Faltas (%)',
+  editLabel = 'Editar',
   onEdit,
   onDelete,
 }: StudentTableProps) {
   const [selectedStudent, setSelectedStudent] = useState<Student | null>(null)
-  const closeButtonRef = useRef<HTMLButtonElement>(null)
-
-  useEffect(() => {
-    if (!selectedStudent) return undefined
-
-    const previouslyFocused = document.activeElement
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') setSelectedStudent(null)
-    }
-
-    document.addEventListener('keydown', handleKeyDown)
-    closeButtonRef.current?.focus()
-
-    return () => {
-      document.removeEventListener('keydown', handleKeyDown)
-      if (previouslyFocused instanceof HTMLElement) previouslyFocused.focus()
-    }
-  }, [selectedStudent])
+  const dialogRef = useAccessibleDialog(Boolean(selectedStudent), () => setSelectedStudent(null))
+  const canShowActions = canEdit || canDelete
 
   if (loading) return <div className="loading-state">Carregando alunos...</div>
   if (students.length === 0) return <div className="empty-state">{emptyLabel}</div>
@@ -80,12 +82,14 @@ export function StudentTable({
             <th>{gradeLabel}</th>
             <th>{absenceLabel}</th>
             <th>Situação</th>
-            {canManageStudents && <th className="actions-column">Ações</th>}
+            {canShowActions && <th className="actions-column">Ações</th>}
           </tr>
         </thead>
         <tbody>
           {students.map((student) => {
             const status = getStudentStatus(student)
+            const gradeTone = academicValueTone(student.nota_final, student.risco_nota === true)
+            const absenceTone = academicValueTone(student.taxa_faltas, student.risco_faltas === true)
             const description = student.descricao?.trim()
             const tooltipId = `student-description-preview-${student.matricula}`
             return (
@@ -120,13 +124,29 @@ export function StudentTable({
                   <span>{student.curso || '—'}</span>
                   <span className="table-subtitle">{student.turma || 'Sem turma'}</span>
                 </td>
-                <td>{displayNumber(student.nota_final)}</td>
-                <td>{displayNumber(student.taxa_faltas)}</td>
+                <td>
+                  <span
+                    aria-label={`${academicValueTitle('grade', gradeTone)}: ${displayNumber(student.nota_final)}`}
+                    className={`student-academic-value student-academic-value--${gradeTone}`}
+                    title={academicValueTitle('grade', gradeTone)}
+                  >
+                    {displayNumber(student.nota_final)}
+                  </span>
+                </td>
+                <td>
+                  <span
+                    aria-label={`${academicValueTitle('absence', absenceTone)}: ${displayNumber(student.taxa_faltas)}`}
+                    className={`student-academic-value student-academic-value--${absenceTone}`}
+                    title={academicValueTitle('absence', absenceTone)}
+                  >
+                    {displayNumber(student.taxa_faltas)}
+                  </span>
+                </td>
                 <td><span className={statusClass(status)}>{status}</span></td>
-                {canManageStudents && (
+                {canShowActions && (
                   <td className="row-actions">
-                    <button className="text-button" onClick={() => onEdit?.(student)} type="button">Editar</button>
-                    <button className="text-button danger-text" onClick={() => onDelete?.(student)} type="button">Excluir</button>
+                    {canEdit && <button className="text-button" onClick={() => onEdit?.(student)} type="button">{editLabel}</button>}
+                    {canDelete && <button className="text-button danger-text" onClick={() => onDelete?.(student)} type="button">Excluir</button>}
                   </td>
                 )}
               </tr>
@@ -148,7 +168,9 @@ export function StudentTable({
             aria-labelledby="student-description-title"
             aria-modal="true"
             className="modal-card student-description-modal"
+            ref={dialogRef}
             role="dialog"
+            tabIndex={-1}
           >
             <div className="modal-header">
               <div>
@@ -160,7 +182,6 @@ export function StudentTable({
                 aria-label="Fechar descrição"
                 className="icon-button"
                 onClick={() => setSelectedStudent(null)}
-                ref={closeButtonRef}
                 type="button"
               >
                 ×

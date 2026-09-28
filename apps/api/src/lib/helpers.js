@@ -30,7 +30,11 @@ async function ensureAuth(req, res, next) {
 
   try {
     const user = await getSql(
-      'SELECT id, username, role, matricula, nome, curso, disciplina, turma, session_version FROM usuarios WHERE id = ?',
+      `SELECT id, username, role, matricula, nome, curso, disciplina, turma,
+              session_version, foto_perfil_versao,
+              CASE WHEN foto_perfil IS NOT NULL AND length(foto_perfil) > 0 THEN 1 ELSE 0 END AS has_profile_photo
+       FROM usuarios
+       WHERE id = ?`,
       [userId]
     );
     if (!user) {
@@ -53,7 +57,9 @@ async function ensureAuth(req, res, next) {
       curso: user.curso,
       disciplina: user.disciplina,
       turma: user.turma,
-      sessionVersion: currentVersion
+      sessionVersion: currentVersion,
+      hasProfilePhoto: Number(user.has_profile_photo) === 1,
+      profilePhotoVersion: Number(user.foto_perfil_versao) || 0
     };
     return next();
   } catch (error) {

@@ -18,8 +18,14 @@ export interface User {
   curso?: string | null
   disciplina?: string | null
   turma?: string | null
+  hasProfilePhoto?: boolean
+  profilePhotoVersion?: number
   capabilities?: {
     canManageStudents?: boolean
+    canRegisterStudents?: boolean
+    canDeleteStudents?: boolean
+    canExportCsv?: boolean
+    canEditOwnSubject?: boolean
     canManageUsers?: boolean
   }
 }
@@ -57,21 +63,52 @@ export interface Student {
   subjects?: Subject[]
   materias_json?: Subject[] | string | null
   situacao_risco?: string | null
+  risco_nota?: boolean
+  risco_faltas?: boolean
+  alerta_nota?: boolean
+  alerta_faltas?: boolean
 }
 
 export interface StudentFilters {
+  q?: string
   busca_matricula?: string
   busca_nome?: string
   periodo?: number
+  /** Escolhe entre o cadastro que pode ser alterado e um fechamento acadêmico. */
+  fonte?: AcademicDataSource
+  curso?: string
+  turma?: string
+  categoria?: string
+  cota?: string
+  situacao?: 'risco' | 'alerta' | 'regular' | ''
+  page?: number
+  pageSize?: number
+  sort?: 'nome' | 'matricula' | 'nota_final' | 'taxa_faltas' | 'situacao_risco'
+  direction?: 'asc' | 'desc'
 }
 
 export interface StudentListData {
   alunos?: Student[]
   students?: Student[]
   total?: number
+  page?: number
+  pageSize?: number
+  totalPages?: number
+  hasPreviousPage?: boolean
+  hasNextPage?: boolean
+  sort?: string
+  direction?: 'asc' | 'desc'
+  filters?: StudentFilters
+  subjectNames?: string[]
   periodIndex?: number
   currentPeriodName?: string
   periodOptions?: string[]
+  /** Origem efetivamente usada pelo servidor para os indicadores desta resposta. */
+  dataSource?: AcademicDataSource
+  /** Informa que existe um fechamento salvo para o período, mesmo em dados atuais. */
+  hasPeriodSnapshot?: boolean
+  /** Data de captura do fechamento, quando a origem consultada é histórica. */
+  snapshotAt?: string | null
   canManageStudents?: boolean
 }
 
@@ -82,11 +119,35 @@ export interface SubjectData {
   periodIndex?: number
   currentPeriodName?: string
   periodOptions?: string[]
+  dataSource?: AcademicDataSource
+  hasPeriodSnapshot?: boolean
+  snapshotAt?: string | null
   canManageStudents?: boolean
+}
+
+export type AcademicDataSource = 'atual' | 'historico'
+
+/** Resposta detalhada do boletim individual, incluindo a origem dos indicadores. */
+export interface StudentDetailData {
+  aluno: Student
+  periodIndex?: number
+  currentPeriodName?: string
+  periodOptions?: string[]
+  dataSource?: AcademicDataSource
+  hasPeriodSnapshot?: boolean
+  snapshotAt?: string | null
+}
+
+export interface ProfessorSubjectPayload {
+  nota: number
+  faltas: number
+  faltas_justificadas: number
+  total_aulas: number
 }
 
 export interface StatisticsFilters {
   periodo?: number
+  busca_nome?: string
   curso?: string
   turma?: string
   categoria?: string
@@ -158,6 +219,7 @@ export interface AcademicHistorySaveResult {
 export interface StatisticsData {
   periodIndex: number
   currentPeriodName: string
+  currentTimestamp?: string
   periodOptions: string[]
   scope: StatisticsScope
   filters: StatisticsFilters
@@ -242,6 +304,20 @@ export interface ApiResult<T> {
   message: string
 }
 
+export interface ChatResponse {
+  message: string
+  mode: 'ai' | 'contextual'
+  intent: string
+  sources: string[]
+  scope: {
+    role: string
+    access: 'global' | 'curso' | 'turma' | 'proprio' | 'nenhum'
+    curso?: string | null
+    disciplina?: string | null
+    turma?: string | null
+  }
+}
+
 export const DEFAULT_PERIODS = [
   'Bimestre 1',
   'Bimestre 2',
@@ -251,9 +327,29 @@ export const DEFAULT_PERIODS = [
   'Semestre 2',
 ]
 
+/** True only for roles allowed to edit a complete student enrollment. */
 export function canManageStudents(user: User): boolean {
+  if (user.role === 'Professor' || user.role === 'Aluno') return false
   if (typeof user.capabilities?.canManageStudents === 'boolean') {
     return user.capabilities.canManageStudents
   }
-  return ['Admin', 'Diretor', 'Professor'].includes(user.role)
+  return ['Admin', 'Diretor'].includes(user.role)
+}
+
+/** Controls access to the Cadastro page, including manual registration. */
+export function canRegisterStudents(user: User): boolean {
+  if (user.role === 'Professor' || user.role === 'Aluno') return false
+  if (typeof user.capabilities?.canRegisterStudents === 'boolean') {
+    return user.capabilities.canRegisterStudents
+  }
+  return ['Admin', 'Diretor'].includes(user.role)
+}
+
+/** A professor may update indicators only for the discipline assigned to them. */
+export function canEditAssignedSubject(user: User): boolean {
+  if (user.role !== 'Professor') return false
+  if (typeof user.capabilities?.canEditOwnSubject === 'boolean') {
+    return user.capabilities.canEditOwnSubject
+  }
+  return Boolean(user.disciplina?.trim())
 }

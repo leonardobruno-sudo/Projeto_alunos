@@ -3,14 +3,17 @@
 import type {
   ApiResult,
   AcademicHistorySaveResult,
+  ChatResponse,
   StatisticsData,
   StatisticsFilters,
   Student,
+  StudentDetailData,
   StudentFilters,
   StudentImportResult,
   StudentListData,
   StudentMovePayload,
   StudentPayload,
+  ProfessorSubjectPayload,
   SubjectData,
   User,
   UserCreatePayload,
@@ -121,8 +124,40 @@ export const api = {
     return request<null>('/api/auth/password', { method: 'POST', body: payload })
   },
 
-  getStudents(filters: StudentFilters = {}): Promise<ApiResult<StudentListData | Student[]>> {
-    return request<StudentListData | Student[]>(`/api/alunos${queryString(filters)}`)
+  async uploadProfilePhoto(file: File): Promise<ApiResult<User>> {
+    const formData = new FormData()
+    formData.append('foto', file)
+    const result = await request<User | { user: User; capabilities?: User['capabilities'] }>('/api/auth/profile/photo', {
+      method: 'PUT',
+      body: formData,
+    })
+    return { ...result, data: userFrom(result.data) }
+  },
+
+  async removeProfilePhoto(): Promise<ApiResult<User>> {
+    const result = await request<User | { user: User; capabilities?: User['capabilities'] }>('/api/auth/profile/photo', {
+      method: 'DELETE',
+    })
+    return { ...result, data: userFrom(result.data) }
+  },
+
+  getStudents(
+    filters: StudentFilters = {},
+    options: Pick<RequestOptions, 'signal'> = {},
+  ): Promise<ApiResult<StudentListData | Student[]>> {
+    return request<StudentListData | Student[]>(`/api/alunos${queryString(filters)}`, options)
+  },
+
+  getStudent(
+    matricula: string,
+    filters: Pick<StudentFilters, 'periodo' | 'fonte'> = {},
+    options: Pick<RequestOptions, 'signal'> = {},
+  ): Promise<ApiResult<StudentDetailData>> {
+    return request<StudentDetailData>(`/api/alunos/${encodeURIComponent(matricula)}${queryString(filters)}`, options)
+  },
+
+  getEditableStudent(matricula: string): Promise<ApiResult<{ aluno: Student }>> {
+    return request<{ aluno: Student }>(`/api/alunos/${encodeURIComponent(matricula)}/edicao`)
   },
 
   getStatistics(filters: StatisticsFilters = {}): Promise<ApiResult<StatisticsData>> {
@@ -175,6 +210,17 @@ export const api = {
     return request<Student | { aluno: Student }>(`/api/alunos/${encodeURIComponent(matricula)}`, { method: 'PUT', body: payload })
   },
 
+  updateProfessorSubject(
+    matricula: string,
+    subject: string,
+    payload: ProfessorSubjectPayload,
+  ): Promise<ApiResult<Student | { aluno: Student }>> {
+    return request<Student | { aluno: Student }>(
+      `/api/alunos/${encodeURIComponent(matricula)}/materias/${encodeURIComponent(subject)}`,
+      { method: 'PATCH', body: payload },
+    )
+  },
+
   deleteStudent(matricula: string): Promise<ApiResult<null>> {
     return request<null>(`/api/alunos/${encodeURIComponent(matricula)}`, { method: 'DELETE' })
   },
@@ -190,8 +236,12 @@ export const api = {
     return request<string[]>(`/api/turma-materias${queryString({ turma })}`)
   },
 
-  getSubject(index: number, filters: StudentFilters = {}): Promise<ApiResult<SubjectData>> {
-    return request<SubjectData>(`/api/materia/${index}${queryString(filters)}`)
+  getSubject(
+    index: number,
+    filters: StudentFilters = {},
+    options: Pick<RequestOptions, 'signal'> = {},
+  ): Promise<ApiResult<SubjectData>> {
+    return request<SubjectData>(`/api/materia/${index}${queryString(filters)}`, options)
   },
 
   getUsers(): Promise<ApiResult<User[] | { users: User[] }>> {
@@ -208,7 +258,15 @@ export const api = {
     return { ...result, data: result.data.user }
   },
 
+  deleteUser(id: number): Promise<ApiResult<null>> {
+    return request<null>(`/api/usuarios/${id}`, { method: 'DELETE' })
+  },
+
   createBackup(): Promise<ApiResult<null>> {
     return request<null>('/api/backup', { method: 'POST' })
+  },
+
+  chat(message: string, options: Pick<RequestOptions, 'signal'> = {}): Promise<ApiResult<ChatResponse>> {
+    return request<ChatResponse>('/api/chat', { ...options, method: 'POST', body: { message } })
   },
 }
