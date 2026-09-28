@@ -11,3 +11,4 @@ __pycache__/
 # acadêmicos, sessões ou fotos de perfil de um ambiente local.
 /database/*
 !/database/.gitkeep
+entregaveis/*.docx

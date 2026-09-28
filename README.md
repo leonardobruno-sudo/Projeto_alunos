@@ -1,38 +1,75 @@
 # SGAC — Sistema de Gerenciamento de Alunos Cotistas
 
-O SGAC acompanha estudantes cotistas com acesso restrito por perfil, busca paginada, indicadores acadêmicos e um assistente de IA que só consulta dados autorizados para a sessão atual.
+O SGAC é uma aplicação web para cadastro, acompanhamento acadêmico e gestão de estudantes cotistas. A interface é React/TypeScript; a API é Express/Node.js e persiste os dados em SQLite local. A API é a fronteira de autenticação e autorização: o navegador não acessa o banco diretamente.
 
-## Estrutura
+## O que o sistema faz
+
+- Mantém cadastro de estudantes, matrícula, curso, turma, cotas, matérias, notas, frequência e indicadores acadêmicos.
+- Permite pesquisar e filtrar estudantes dentro do escopo de cada perfil; administradores também podem importar cadastros por CSV.
+- Apresenta dashboard, estatísticas, gráficos e dados por matéria.
+- Salva snapshots acadêmicos por período para consulta histórica, sem substituir os dados atuais.
+- Permite que professores atualizem somente a nota e a frequência da matéria atribuída.
+- Oferece gestão de contas e permissões, alteração de senha, foto de perfil e backup administrativo.
+- Inclui assistente somente de leitura para orientação do SGAC, acessibilidade e consultas acadêmicas autorizadas.
+- Oferece preferências visuais de alto contraste, texto ampliado e movimento reduzido.
+
+## Perfis e acesso
+
+| Perfil | Escopo de consulta | Ações principais |
+| --- | --- | --- |
+| Admin | Todos os estudantes | Gerencia contas, cadastros, CSV, períodos e backup |
+| Diretor | Estudantes do próprio curso | Gerencia estudantes dentro do curso |
+| Professor | Próprio curso, turma e matéria atribuída | Consulta estudantes do escopo e edita somente sua matéria |
+| Aluno | Apenas o próprio cadastro, pela matrícula | Consulta seus dados e desempenho |
+
+O servidor deriva identidade e escopo da sessão autenticada. Filtros enviados pelo navegador não ampliam permissões. A exportação CSV é exclusiva de Admin; contas de aluno são provisionadas junto ao cadastro e não são gerenciadas como contas comuns de equipe.
+
+## Organização do código
 
 ```text
 apps/
-  api/                 API Express, autenticação e regras de negócio
-    src/modules/
-      students/        DTO, controller e serviço de busca de alunos
-      ai/              DTO, controlador de comandos e serviço de IA
-  web/                 Aplicação React/Vite
-    src/features/      DTOs de tela e recursos independentes, como o chat
-database/              Diretório local do SQLite (somente .gitkeep é versionado)
+  api/
+    src/lib/          Banco, autenticação, sessão, permissões e utilitários
+    src/modules/      Casos de uso de alunos e assistente
+    src/routes/       Rotas HTTP da API
+    test/             Testes Node.js da API e regras de negócio
+  web/
+    src/components/   Componentes React reutilizáveis
+    src/features/     Funcionalidades isoladas, como chat
+    src/pages/        Dashboard, estatísticas, cadastro e configurações
+database/             Local reservado ao SQLite de cada instalação
 ```
 
-O navegador nunca fala diretamente com SQLite ou com o provedor de IA. A API obtém a identidade da sessão, aplica a regra de escopo e só então consulta os dados ou prepara o contexto permitido para o assistente.
+O schema é inicializado e atualizado por `apps/api/src/lib/database.js`. As tabelas principais são `alunos`, `usuarios`, `historico_academico`, `sessoes` e `movimentacoes`. Índices apoiam buscas normalizadas por matrícula/nome e filtros por curso, turma e matéria. Excluir um cadastro remove a conta estudantil vinculada; snapshots históricos são preservados.
 
-## Execução
+## API
 
-Requer Node.js 20.19 LTS ou 22.12 ou superior.
+Todas as rotas de dados ficam sob `/api`; as rotas protegidas exigem sessão autenticada.
+
+| Rota | Finalidade |
+| --- | --- |
+| `/api/auth/login`, `/api/auth/me`, `/api/auth/logout` | Login, sessão atual e encerramento |
+| `/api/auth/password`, `/api/auth/profile/photo` | Senha e foto de perfil |
+| `/api/alunos` | Listagem paginada e cadastro conforme permissão |
+| `/api/alunos/importar`, `/api/alunos/modelo.csv` | Importação e modelo CSV, exclusivos de Admin |
+| `/api/alunos/:matricula` | Consulta do cadastro dentro do escopo |
+| `/api/alunos/:matricula/materias/:subject` | Atualização da matéria autorizada do professor |
+| `/api/periodos`, `/api/periodos/:periodo/historico` | Períodos; snapshots históricos são salvos por Admin |
+| `/api/estatisticas`, `/api/materia/:index` | Indicadores e consulta por matéria com escopo aplicado |
+| `/api/usuarios` | Gestão de contas de equipe, exclusiva de Admin |
+| `/api/backup` | Backup do banco, exclusivo de Admin |
+| `/api/chat` | Assistente de leitura, limitada à sessão e às permissões existentes |
+
+## Instalação e execução
+
+Requer Node.js `20.19.x` ou `22.12+`.
 
 ```powershell
 npm install
 npm --prefix apps/web install
 ```
 
-Para desenvolvimento, execute `npm run dev` em um terminal e `npm run client:dev` em outro. A interface Vite usa proxy para a API local.
-
-## Banco local e primeiro administrador
-
-O repositório não inclui banco SQLite, backup, sessões ou fotos de perfil. Cada pessoa cria seu próprio arquivo local em `database/escola.db`; o servidor cria o diretório, as tabelas, índices e gatilhos automaticamente na primeira execução.
-
-Antes de abrir o sistema pela primeira vez, crie o administrador inicial. Escolha uma senha real, sem registrá-la no Git:
+Crie o primeiro administrador em um banco vazio. Use uma senha própria e não a coloque em arquivos versionados:
 
 ```powershell
 $env:INITIAL_ADMIN_USERNAME = 'admin-local'
@@ -41,13 +78,15 @@ $env:INITIAL_ADMIN_NAME = 'Administrador local'
 npm run create:admin
 ```
 
-Depois execute `npm run quickstart`. O comando de criação só funciona quando ainda não há uma conta `Admin`; as demais contas devem ser cadastradas na tela de permissões. Para manter o banco fora da pasta do projeto, defina `DATABASE_PATH` com um caminho absoluto antes de executar os comandos. Os testes já usam bancos temporários isolados e não dependem do banco local.
+Depois, `npm run quickstart` compila a interface e inicia o sistema. Para desenvolvimento separado, execute `npm run dev` e `npm run client:dev` em terminais diferentes. A interface Vite encaminha `/api` para a API local.
 
-## Assistente SGAC
+Por padrão, o banco é `database/escola.db`, criado localmente na primeira execução. Para usar outro caminho, configure `DATABASE_PATH` com um caminho absoluto. Bancos, backups, sessões e fotos de perfil não são versionados. Em produção, configure `SESSION_SECRET` e HTTPS.
 
-A assistente aceita perguntas em linguagem natural sobre acessibilidade e uso do sistema, além de consultas acadêmicas autorizadas. O conhecimento institucional fica versionado no servidor em `apps/api/src/modules/ai/knowledgeBase.js`. Consultas acadêmicas continuam somente leitura, com identidade e escopo derivados da sessão autenticada. O chat não persiste histórico.
+## Assistente e privacidade
 
-Sem modelo instalado, as respostas usam a base local revisada. Para redigir respostas específicas com um modelo local, instale [Ollama](https://ollama.com/download), baixe um modelo e configure no ambiente do servidor:
+O conteúdo institucional e as orientações sobre acessibilidade ficam versionados em `apps/api/src/modules/ai/knowledgeBase.js`. O controlador reconhece consultas acadêmicas permitidas, busca conteúdo local e recusa alterações. Perguntas fora dos assuntos conhecidos não recebem respostas inventadas.
+
+Sem modelo local, o assistente usa respostas revisadas. Opcionalmente, o servidor pode usar Ollama:
 
 ```powershell
 ollama pull qwen2.5:3b
@@ -55,17 +94,44 @@ $env:LOCAL_AI_MODEL = 'qwen2.5:3b'
 npm run dev
 ```
 
-O servidor chama apenas `http://127.0.0.1:11434/api/chat`; o código recusa endpoints externos. A pergunta e o contexto autorizado não são enviados a serviços remotos. Sem Ollama, indisponibilidade do modelo ou resposta inválida, a resposta revisada da base local continua disponível. Consulte [Acessibilidade](ACCESSIBILITY.md) para critérios, limites e referências.
+O código aceita apenas o endpoint local `127.0.0.1:11434`; não envia perguntas ou contexto a serviços remotos. O modelo pode redigir uma resposta a partir do contexto já autorizado, mas não recebe ferramentas para consultar ou alterar o banco. O chat não persiste histórico. Sem Ollama ou se ele falhar, permanece disponível a resposta local.
 
-## Segurança e arquitetura
+## Acessibilidade
 
-- DTOs validam entradas da busca e do chat na API; os DTOs React normalizam respostas antes da renderização.
-- A autorização é aplicada no servidor a cada chamada, usando função, curso, turma, disciplina e matrícula quando necessários.
-- O módulo de IA não recebe o banco inteiro e não executa comandos de alteração.
-- A busca retorna no máximo 50 registros por página e usa índices para escopos acadêmicos e nome.
+A meta de desenvolvimento é WCAG 2.2 AA; isso não representa certificação. As configurações incluem contraste alto, texto ampliado e movimento reduzido. Acessibilidade também depende de testes manuais com teclado, leitores de tela, zoom/reflow e pessoas com deficiência. Veja [ACCESSIBILITY.md](ACCESSIBILITY.md) para critérios e referências.
 
-A organização foi baseada na separação de componentes e fluxo de dados recomendada pelo [React](https://react.dev/learn/thinking-in-react), em rotas modulares do [Express](https://expressjs.com/en/guide/routing.html) e em contratos documentáveis pela [OpenAPI Specification](https://spec.openapis.org/oas/latest.html). O controle de dados segue o princípio de menor privilégio, negação por padrão e validação no servidor do [OWASP Authorization Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Authorization_Cheat_Sheet.html).
+## Testes e CI
 
-## Referências aplicadas
+```powershell
+npm test
+npm run lint
+npm run build
+npm audit
+```
 
-O [vídeo de referência fornecido](https://youtu.be/_gHr2Pe5LCY?is=fToJ7OVVSTdyI8ds) inspirou a separação entre componentes React, cliente de API e rotas do servidor. A implementação aproveita esse padrão sem permitir que o navegador acesse o SQLite diretamente: DTOs delimitam o contrato, controladores coordenam cada caso de uso e o banco fica atrás da API. Para permissões por atributos de sessão, também foi adotada a noção de escopo do [NIST SP 800-162 sobre ABAC](https://nvlpubs.nist.gov/nistpubs/specialpublications/nist.sp.800-162.pdf), aplicada junto às regras existentes de papel, curso, disciplina, turma e matrícula.
+O GitHub Actions executa testes, lint e build em pushes e pull requests. O fluxo de branches e a revisão estão descritos em [CONTRIBUTING.md](CONTRIBUTING.md).
+
+## Relatórios técnicos
+
+Este README é a documentação principal do sistema no Git. Os DOCX de `entregaveis/` são documentos derivados, não fonte de verdade, e ficam fora do versionamento para evitar cópias desatualizadas e binários no repositório. Os antigos geradores `.tmp_relatorio_*` eram temporários e dependiam de caminhos locais; não fazem parte do fluxo de build do SGAC.
+
+## Como manter este README
+
+Atualize a seção afetada quando mudar uma permissão, endpoint, tabela, comando, configuração ou funcionalidade. Confira primeiro o código e os testes; descreva somente o comportamento implementado, diferencie claramente limitações de planos futuros e execute os comandos de validação acima.
+
+Para pedir uma revisão ou atualização assistida por IA, use este roteiro:
+
+```text
+Revise o README.md comparando cada afirmação com o código e os testes atuais.
+Atualize apenas os trechos afetados pela mudança descrita. Não invente recursos,
+permissões, dados ou conformidade. Indique as fontes no repositório que sustentam
+cada alteração e liste dúvidas que precisem de confirmação humana.
+```
+
+## Referências
+
+- [React: Thinking in React](https://react.dev/learn/thinking-in-react)
+- [Express: Routing](https://expressjs.com/en/guide/routing.html)
+- [OWASP Authorization Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Authorization_Cheat_Sheet.html)
+- [WCAG 2.2 Quick Reference — W3C](https://www.w3.org/WAI/WCAG22/quickref/)
+- [Google Dialogflow CX: Intents](https://docs.cloud.google.com/dialogflow/cx/docs/concept/intent)
