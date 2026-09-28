@@ -74,7 +74,7 @@ Use mensagens de commit no formato `tipo: resumo`, por exemplo `feat: orientar u
 
 ### Proteção no GitHub
 
-Em **Settings > Rules > Rulesets**, crie regras para `main` e `develop`: exija pull request, exija a verificacao `verify` do workflow de CI e bloqueie force-push e exclusao da branch. Essa configuracao requer permissao de administracao no GitHub e nao pode ser aplicada apenas por arquivos locais.
+O ruleset ativo `Proteger main e develop` aplica-se a `main` e `develop`: exige pull request, o check `verify` do GitHub Actions, branch atualizada e conversas resolvidas; também bloqueia force-push e exclusão. A contagem de aprovações está em zero enquanto não há revisores configurados. Depois de convidar colaboradores, defina ao menos uma aprovação e configure `CODEOWNERS` com usernames/equipes reais em **Settings > Rules > Rulesets**. Essas configurações exigem permissão de administração no GitHub.
 
 ## Quando simplificar
 
