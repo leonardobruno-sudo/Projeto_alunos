@@ -1,10 +1,14 @@
 /**
- * Deterministic command layer for SGAC chat.
+ * Papel de `commandController`: implementa regras de negócio do domínio e conversa com os serviços compartilhados e o banco sem depender da interface.
+ * Este arquivo recebe ou produz dados para os módulos indicados pelos imports e exports abaixo.
+ */
+/**
+ * Camada determinística de comandos do chat do SGAC.
  *
- * An LLM never chooses what to query. This controller recognizes a small,
- * read-only command set, obtains data through the existing visibility-aware
- * database helpers and applies the existing permission function once more as
- * defense in depth. It never imports raw SQLite access or mutation helpers.
+ * O modelo de linguagem não escolhe os dados consultados. Este controlador reconhece um conjunto pequeno
+ * de consultas somente leitura e busca dados por funções que respeitam o escopo de acesso
+ * e reaplica as regras de permissão como
+ * proteção adicional. Ele não acessa o SQLite diretamente nem importa funções de alteração.
  */
 'use strict';
 
@@ -23,6 +27,7 @@ const CHAT_INTENTS = Object.freeze({
   RISK: 'at_risk_students',
   SEARCH: 'student_search',
   KNOWLEDGE: 'knowledge',
+  FOLLOW_UP: 'follow_up',
   MUTATION: 'mutation_not_allowed',
   UNSUPPORTED: 'unsupported'
 });
@@ -63,12 +68,12 @@ function hasAuthenticatedIdentity(user) {
   return Boolean(user && typeof user === 'object' && toText(user.role));
 }
 
-/** Returns only the server-known scope that is useful to a client UI. */
+/** Devolve apenas o escopo conhecido pelo servidor que a interface precisa exibir. */
 function buildScope(user) {
   const role = toText(user?.role) || 'Desconhecido';
 
   if (role === 'Admin') return { role, access: 'global' };
-  if (role === 'Diretor') {
+  if (role === 'Diretor' || role === 'Coordenador') {
     return { role, access: 'curso', curso: toSafeText(user.curso) };
   }
   if (role === 'Professor') {
@@ -91,8 +96,8 @@ function isAtRisk(student) {
 }
 
 /**
- * Whitelists response fields. In particular, telephone, description, account
- * data and the raw subject JSON are never forwarded to a model or response.
+ * Seleciona explicitamente os campos de resposta. Telefone, descrição e dados da conta
+ * ou JSON bruto de matérias nunca são enviados ao modelo ou à resposta.
  */
 function toSafeStudent(student, { includeSubjects = false } = {}) {
   const safeStudent = {
@@ -194,7 +199,7 @@ function makeResult({ intent, scope, sources = [], context = null, fallbackMessa
 }
 
 function hasMutationRequest(normalizedMessage) {
-  // Commands that would change SGAC state are intentionally not implemented.
+  // Comandos que alterariam dados do SGAC não são implementados de propósito.
   return /\b(cadastrar|criar|adicionar|inserir|editar|alterar|atualizar|remover|excluir|apagar|movimentar|salvar|resetar|trocar)\b/.test(normalizedMessage);
 }
 
@@ -208,8 +213,8 @@ function sanitizeSearchValue(value) {
 }
 
 /**
- * Recognizes only explicit name or matrícula searches. Free-form text is not
- * silently converted into a broad search, which keeps results predictable.
+ * Reconhece buscas explícitas por nome ou matrícula. Texto livre não é
+ * convertido silenciosamente em busca ampla, mantendo resultados previsíveis.
  */
 function parseSearchCommand(message) {
   const matriculaPatterns = [
@@ -254,9 +259,11 @@ function classifyIntent(message) {
   }
 
   const knowledge = searchKnowledgeBase(message);
-  return knowledge.length
-    ? { intent: CHAT_INTENTS.KNOWLEDGE, knowledge }
-    : { intent: CHAT_INTENTS.UNSUPPORTED };
+  if (knowledge.length) return { intent: CHAT_INTENTS.KNOWLEDGE, knowledge };
+  if (/\b(explique|explica|detalhe|detalha|aprofunde|fale mais|mais detalhes|pode explicar|como assim|o que isso significa)\b/.test(normalized)) {
+    return { intent: CHAT_INTENTS.FOLLOW_UP };
+  }
+  return { intent: CHAT_INTENTS.UNSUPPORTED };
 }
 
 class ChatCommandController {
@@ -273,15 +280,15 @@ class ChatCommandController {
   }
 
   /**
-   * Uses a session-shaped object populated exclusively from the authenticated
-   * server user. No value received in the message can affect this scope.
+   * Usa um objeto de sessão preenchido somente com dados da pessoa autenticada
+   * pelo servidor. Nenhum dado da mensagem altera esse escopo.
    */
   async getScopedStudents(user, query = {}) {
     const data = await this.database.fetchVisibleStudents({
-      // Chat answers describe the current academic record.  A period snapshot
-      // is an audit view and must never silently replace a recently edited
-      // grade, attendance count, or risk status in a conversational answer.
-      // Keep this value server-owned even if a future caller supplies a query.
+      // O chat descreve os dados acadêmicos atuais. O snapshot do período
+      // serve para auditoria e não substitui sem aviso uma nota ou frequência
+      // atualizada recentemente na resposta conversacional.
+      // Este valor permanece sob controle do servidor, mesmo se outro chamador enviar uma consulta.
       query: { ...query, fonte: 'atual' },
       session: { user }
     });
@@ -299,9 +306,9 @@ class ChatCommandController {
   async getOwnStudent(user) {
     if (user.role !== 'Aluno' || !toText(user.matricula)) return null;
 
-    // The default individual reader is intentionally period-oriented so UI
-    // screens can open a closed bulletin. The chat is a live assistance
-    // surface, therefore it always asks for the current source explicitly.
+    // A consulta individual padrão prioriza o período para que as telas
+    // exibam boletins encerrados. O chat presta assistência sobre dados atuais
+    // e por isso seleciona explicitamente a fonte atual.
     const student = await this.database.getVisibleStudentByMatricula(
       user,
       user.matricula,
@@ -311,7 +318,7 @@ class ChatCommandController {
     return student && this.permissions.canAccessStudent(user, student) ? student : null;
   }
 
-  async execute(user, message) {
+  async execute(user, message, { contextMessage = '' } = {}) {
     if (!hasAuthenticatedIdentity(user)) throw new ChatAuthorizationError();
 
     const scope = buildScope(user);
@@ -333,10 +340,41 @@ class ChatCommandController {
         sources: command.knowledge.map((item) => item.source),
         context: {
           tipo: 'orientacao_local',
+          perfil: scope.role,
+          escopo: scope.access,
           artigos: command.knowledge.map(({ title, answer, url }) => ({ title, answer, url }))
         },
         fallbackMessage: command.knowledge.map((item) => item.answer).join('\n\n'),
         useAi: true
+      });
+    }
+
+    if (command.intent === CHAT_INTENTS.FOLLOW_UP) {
+      // A interface pode sugerir a pergunta anterior, mas o servidor a valida de novo
+      // e reutiliza somente conhecimento local verificado. Dados de alunos e
+      // respostas sem validação não são usadas como contexto de continuação.
+      const prior = contextMessage ? classifyIntent(contextMessage) : null;
+      if (prior?.intent === CHAT_INTENTS.KNOWLEDGE) {
+        return makeResult({
+          intent: CHAT_INTENTS.FOLLOW_UP,
+          scope,
+          sources: prior.knowledge.map((item) => item.source),
+          context: {
+            tipo: 'continuidade_orientacao_local',
+            perfil: scope.role,
+            escopo: scope.access,
+            artigos: prior.knowledge.map(({ title, answer, url }) => ({ title, answer, url }))
+          },
+          fallbackMessage: prior.knowledge.map((item) => item.answer).join('\n\n'),
+          useAi: true
+        });
+      }
+
+      return makeResult({
+        intent: CHAT_INTENTS.UNSUPPORTED,
+        scope,
+        fallbackMessage: 'Ainda não tenho contexto suficiente para continuar. Reformule a pergunta ou escolha uma sugestão de ajuda.',
+        useAi: false
       });
     }
 
@@ -384,8 +422,8 @@ class ChatCommandController {
     }
 
     if (command.intent === CHAT_INTENTS.SUMMARY) {
-      // A student receives only an aggregate of their own record; staff gets
-      // aggregates only from records already filtered to its server scope.
+      // O aluno recebe apenas um resumo dos próprios dados. A equipe consulta
+      // resumos de registros já limitados ao escopo autorizado no servidor.
       if (user.role === 'Aluno') {
         const student = await this.getOwnStudent(user);
         if (!student) {
@@ -495,7 +533,7 @@ class ChatCommandController {
       });
     }
 
-    // Kept as a safe future-proof fallback if a new intent is added above.
+    // Mantém uma alternativa segura se uma nova intenção for adicionada acima.
     return makeResult({
       intent: CHAT_INTENTS.UNSUPPORTED,
       scope,

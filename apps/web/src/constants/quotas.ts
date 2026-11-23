@@ -1,4 +1,8 @@
-/** Defines the quota modalities shared by student registration and statistics filters. */
+/** Papel de `quotas`: concentra uma responsabilidade reutilizável e serve de ponte entre os trechos que o importam.
+ * Ele se conecta aos serviços e componentes importados e entrega sua saída a quem o consome.
+ */
+
+/** Define modalidades de cota usadas no cadastro e nos filtros estatísticos. */
 
 export const QUOTA_OPTIONS = [
   { value: 'AC', label: 'Ampla concorrência' },

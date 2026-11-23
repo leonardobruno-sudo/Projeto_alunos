@@ -1,4 +1,8 @@
-/** Displays the signed-in user's private profile photo with initials fallback. */
+/** Papel de `ProfileAvatar`: apresenta e coleta dados em um componente reutilizável, recebendo estado e ações da página que o utiliza.
+ * Ele se conecta aos serviços e componentes importados e entrega sua saída a quem o consome.
+ */
+
+/** Exibe a foto privada de perfil da pessoa autenticada ou suas iniciais. */
 
 import { useEffect, useState } from 'react'
 

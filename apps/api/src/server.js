@@ -1,6 +1,12 @@
 /**
- * Application entry point: configures Express, session security, API routes
- * and delivery of the compiled React client.
+ * Papel de `server`: inicializa Express, sessão segura e banco, conecta rotas e entrega a interface React; é o ponto de entrada do servidor.
+ * Este arquivo recebe ou produz dados para os módulos indicados pelos imports e exports abaixo.
+ */
+/**
+ * Ponto de partida do SGAC: prepara o servidor Express e conecta as partes da aplicação.
+ * O navegador chega às rotas de autenticação e aos módulos de alunos, pesquisa e
+ * vida acadêmica; todos usam a sessão e o banco configurados aqui. Em produção,
+ * o mesmo servidor também entrega os arquivos da interface React compilada.
  */
 const express = require('express');
 const session = require('express-session');
@@ -10,6 +16,8 @@ const { setupDatabase } = require('./lib/database');
 const { SqliteSessionStore } = require('./lib/sessionStore');
 const authRoutes = require('./routes/auth');
 const apiRoutes = require('./routes/api');
+const academicLifeRoutes = require('./routes/academicLife');
+const researchRoutes = require('./routes/research');
 
 const app = express();
 const PORT = process.env.PORT ? Number(process.env.PORT) : 3000;
@@ -60,6 +68,8 @@ app.use('/api', (req, res, next) => {
 });
 
 app.use('/api/auth', authRoutes);
+app.use('/api/vida-academica', academicLifeRoutes);
+app.use('/api/pesquisa', researchRoutes);
 app.use('/api', apiRoutes);
 
 app.use('/api', (_req, res) => {
@@ -118,4 +128,14 @@ async function startServer() {
   }
 }
 
-startServer();
+async function initializeApp() {
+  await setupDatabase();
+  return app;
+}
+
+if (require.main === module) {
+  startServer();
+}
+
+module.exports = app;
+module.exports.initializeApp = initializeApp;

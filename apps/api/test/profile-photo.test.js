@@ -1,5 +1,9 @@
 /**
- * Regression coverage for private profile-photo storage. The temporary
+ * Papel de `profile-photo.test`: garante que um comportamento importante continue funcionando nos cenários descritos a seguir.
+ * Este arquivo recebe ou produz dados para os módulos indicados pelos imports e exports abaixo.
+ */
+/**
+ * Confere o armazenamento privado de fotos de perfil. O banco temporário
  * database keeps binary data out of the application's real school records.
  */
 'use strict';
@@ -76,8 +80,8 @@ test('foto de perfil é validada, fica privada no banco e sobrevive à edição 
   assert.equal(storedPhoto.foto_perfil_tipo, 'image/png');
   assert.deepEqual(storedPhoto.foto_perfil, pngHeader);
 
-  // The enrollment is edited independently, but the account/profile photo
-  // must remain intact while the database trigger synchronizes the name.
+  // O cadastro é alterado separadamente, mas a conta e a foto de perfil
+  // devem permanecer intactos enquanto o banco sincroniza o nome.
   await updateStudentFields('FOTO-001', { nome: 'Perfil Atualizado' });
   const synchronizedAccount = await getSql(
     'SELECT nome, foto_perfil, foto_perfil_versao FROM usuarios WHERE id = ?',

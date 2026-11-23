@@ -1,6 +1,7 @@
 /** Responsabilidade: coleta credenciais e inicia a sessão do usuário. */
 
 import { useState, type FormEvent } from 'react'
+import { PasswordInput } from './PasswordInput'
 import { api, getErrorMessage } from '../utils/api'
 import type { User } from '../types'
 
@@ -54,16 +55,13 @@ export function LoginPage({ onLogin }: LoginPageProps) {
               value={username}
             />
           </label>
-          <label>
-            Senha
-            <input
-              autoComplete="current-password"
-              onChange={(event) => setPassword(event.target.value)}
-              required
-              type="password"
-              value={password}
-            />
-          </label>
+          <PasswordInput
+            autoComplete="current-password"
+            label="Senha"
+            onChange={(event) => setPassword(event.target.value)}
+            required
+            value={password}
+          />
           <button className="button button-primary button-block" disabled={submitting} type="submit">
             {submitting ? 'Fazendo login...' : 'Login'}
           </button>

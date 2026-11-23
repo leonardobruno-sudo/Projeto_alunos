@@ -1,4 +1,8 @@
-/** Express controller for the paginated student DTO endpoint. */
+/**
+ * Papel de `student.controller`: implementa regras de negócio do domínio e conversa com os serviços compartilhados e o banco sem depender da interface.
+ * Este arquivo recebe ou produz dados para os módulos indicados pelos imports e exports abaixo.
+ */
+/** Controlador Express da rota que entrega a lista paginada de alunos em DTO. */
 const { apiBadRequest, apiServerError, apiSuccess } = require('../../lib/apiResponse');
 const { parseStudentSearchQuery } = require('./student.dto');
 const { listStudents } = require('./student.service');

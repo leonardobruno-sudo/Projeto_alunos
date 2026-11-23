@@ -1,7 +1,11 @@
 /**
- * Protected JSON API for students, academic data, user administration,
- * backups and CSV imports. It applies authentication, role scope and input
- * validation before changing the SQLite database.
+ * Papel de `api`: recebe requisições HTTP, valida sessão e entrada, aplica permissões e encaminha os dados à regra de negócio ou ao banco.
+ * Este arquivo recebe ou produz dados para os módulos indicados pelos imports e exports abaixo.
+ */
+/**
+ * API JSON protegida para alunos, dados acadêmicos, contas de equipe,
+ * backups e importação de CSV. Confere sessão, escopo do perfil e dados de entrada
+ * antes de alterar o banco SQLite.
  */
 const express = require('express');
 const multer = require('multer');
@@ -21,6 +25,7 @@ const {
   getVisibleStudentByMatricula,
   saveAcademicHistoryPeriod,
   createStudentWithAccount,
+  resetStudentTemporaryPassword,
   deleteStudentByMatricula,
   updateStudentFields,
   deleteStaffUserById
@@ -159,11 +164,13 @@ function roundStatistic(value) {
 function getStatisticsScope(user) {
   if (user.role === 'Aluno') return { role: user.role, label: 'Seu desempenho' };
   if (user.role === 'Professor') return { role: user.role, label: `Turma ${user.turma}` };
-  if (user.role === 'Diretor') return { role: user.role, label: `Curso ${user.curso}` };
+  if (user.role === 'Diretor' || user.role === 'Coordenador') {
+    return { role: user.role, label: `Curso ${user.curso}` };
+  }
   return { role: user.role, label: 'Todos os alunos' };
 }
 
-/** Builds chart-ready aggregates without exposing students outside the current role scope. */
+/** Prepara dados para os gráficos sem revelar alunos fora do escopo do perfil atual. */
 function buildStatistics(alunos) {
   const statusCounts = [
     { label: 'Em Risco', value: 0 },
@@ -332,8 +339,8 @@ function hasValidAttendanceValues(faltas, faltasJustificadas, totalAulas) {
   if (![faltas, faltasJustificadas, totalAulas].every(Number.isInteger)) return false;
   if (faltas < 0 || faltasJustificadas < 0 || totalAulas < 0) return false;
   if (faltasJustificadas > faltas) return false;
-  // A zero workload only represents a subject with no class or absence
-  // registered yet. Any recorded absence needs a real denominator.
+  // Carga horária zero só representa uma matéria sem aulas nem faltas
+  // registradas. Se há faltas, é preciso informar uma carga horária válida.
   return faltas === 0 || (totalAulas > 0 && faltas <= totalAulas);
 }
 
@@ -351,8 +358,8 @@ function getStudentMetrics(subjects, currentStudent = null, { preserveLegacyShar
     nota_final: Number((subjects.reduce((sum, subject) => sum + subject.nota, 0) / subjects.length).toFixed(1)),
     taxa_faltas: subjects.reduce((sum, subject) => sum + subject.faltas, 0),
     faltas_justificadas: subjects.reduce((sum, subject) => sum + subject.faltas_justificadas, 0),
-    // Legacy records store a single workload total even though each subject
-    // repeats it. Keep that denominator when editing such a record.
+    // Registros legados repetem a carga horária total em cada matéria.
+    // Preserve esse denominador ao editar esse tipo de cadastro.
     total_aulas: usesLegacySharedWorkload ? storedTotalAulas : totalAulas
   };
 }
@@ -411,9 +418,9 @@ function buildProfessorSubjectUpdate(body, currentStudent, user, subjectName) {
       : subject
   ));
   const metrics = getStudentMetrics(updatedSubjects, currentStudent, {
-    // Legacy rows duplicated one student-level workload on every subject.
-    // Inspect the untouched record, because editing only one subject makes
-    // the updated array mixed and must not turn the aggregate into a sum.
+    // Linhas antigas repetiam a carga horária do aluno em todas as matérias.
+    // Consulte o registro original: editar uma única matéria pode deixar
+    // a lista atualizada com formatos mistos, sem somar os valores indevidamente.
     preserveLegacySharedWorkload: hasLegacySharedWorkload(currentStudent)
   });
 
@@ -491,7 +498,7 @@ function buildStudentFields(body, currentStudent = null) {
 
 function scopeStudentFields(fields, user) {
   if (user.role === 'Admin') return fields;
-  if (user.role === 'Diretor') {
+  if (user.role === 'Diretor' || user.role === 'Coordenador') {
     if (!user.curso) return null;
     return { ...fields, curso: user.curso };
   }
@@ -513,13 +520,19 @@ function getStudentAccountProvisionError(error) {
       message: 'Não foi possível criar a conta do aluno porque esta matrícula já é usada como usuário por outra conta.'
     };
   }
-  if (error?.code === 'student_initial_password_too_long') {
-    return {
-      status: 'bad_request',
-      message: 'A matrícula e o primeiro nome ultrapassam o tamanho aceito para a senha inicial do aluno.'
-    };
-  }
   return null;
+}
+
+// A senha em texto puro é preparada somente na resposta de uma operação de gravação.
+// As funções de banco mantêm a senha temporariamente na memória para que o cadastro ou a redefinição
+// a mostrem uma única vez à pessoa da equipe que já tem autorização.
+function initialCredentialsResponse(account) {
+  if (!account?.temporaryPassword) return null;
+  return {
+    usuario: account.username,
+    senhaTemporaria: account.temporaryPassword,
+    exigeTrocaDeSenha: account.mustChangePassword === true
+  };
 }
 
 function hasSameText(left, right) {
@@ -544,8 +557,8 @@ function editableStudentResponse(student) {
   const { materias_json: _storedSubjects, ...studentFields } = student;
   return {
     ...studentFields,
-    // This endpoint is purposely separate from the period/report DTOs.
-    // It returns the original academic values, never a view-only adjustment.
+    // Esta rota é separada dos DTOs de boletim e relatório por período.
+    // Ela devolve os valores acadêmicos originais, sem ajustes apenas visuais.
     subjects: buildSubjectEntriesFromStudent(student)
   };
 }
@@ -638,8 +651,8 @@ function userResponse(user) {
   };
 }
 
-const validRoles = new Set(['Admin', 'Diretor', 'Professor', 'Aluno']);
-const managedRoles = new Set(['Admin', 'Diretor', 'Professor']);
+const validRoles = new Set(['Admin', 'Diretor', 'Coordenador', 'Professor', 'Aluno']);
+const managedRoles = new Set(['Admin', 'Diretor', 'Coordenador', 'Professor']);
 const STUDENT_ACCOUNT_MANAGEMENT_MESSAGE =
   'Contas de aluno são criadas e vinculadas automaticamente pelo cadastro ou pela importação. Gerencie os dados do aluno na tela Cadastro.';
 
@@ -664,8 +677,8 @@ async function buildUserProfile(role, source) {
     return { error: 'Informe um nome de até 120 caracteres.' };
   }
 
-  if (role === 'Diretor') {
-    if (!curso || curso.length > 120) return { error: 'Diretor precisa ter um curso válido.' };
+  if (role === 'Diretor' || role === 'Coordenador') {
+    if (!curso || curso.length > 120) return { error: `${role} precisa ter um curso válido.` };
     return { profile: { matricula, nome, curso, disciplina: '', turma: '' } };
   }
 
@@ -686,21 +699,27 @@ router.get('/periodos', ensureAuth, (_req, res) => {
 router.get('/estatisticas', ensureAuth, async (req, res) => {
   const periodIndex = parsePeriod(req.query.periodo);
   if (periodIndex === null) return apiBadRequest(res, 'Período inválido.');
+  const source = parseAcademicDataSource(req.query.fonte);
+  if (source === null) return apiBadRequest(res, 'Fonte de dados inválida.');
   const filterResult = parseStatisticsFilters(req.query);
   if (filterResult.error) return apiBadRequest(res, filterResult.error);
 
-  // A name search helps staff find a student inside the records they already
-  // have permission to view. Course, class and quota filters remain an Admin
-  // convenience; no client-supplied filter can widen the server-side scope.
+  // A busca por nome ajuda a equipe a localizar alunos dentro dos registros que já
+  // pode consultar. Filtros de curso, turma e cota continuam exclusivos do Admin;
+  // nenhum filtro enviado pelo navegador amplia o escopo aplicado no servidor.
   const role = req.session.user.role;
   const statisticsFilters = role === 'Admin'
     ? filterResult.filters
-    : (role === 'Professor' || role === 'Diretor')
+    : (role === 'Professor' || role === 'Coordenador' || role === 'Diretor')
       ? { busca_nome: filterResult.filters.busca_nome }
       : {};
 
   try {
-    const statisticsQuery = { periodo: periodIndex, ...statisticsFilters };
+    // As estatísticas precisam usar a mesma fonte de dados explícita do painel e
+    // do boletim. Sem `fonte`, era escolhido silenciosamente um snapshot salvo,
+    // deixando notas ou faltas recém-editadas
+    // divergentes entre as páginas vistas pelo aluno.
+    const statisticsQuery = { periodo: periodIndex, fonte: source, ...statisticsFilters };
     const [data, evolution] = await Promise.all([
       fetchVisibleStudents({ query: statisticsQuery, session: req.session }),
       buildHistoryEvolution(req.session, statisticsFilters)
@@ -710,7 +729,7 @@ router.get('/estatisticas', ensureAuth, async (req, res) => {
       currentPeriodName: data.currentPeriodName,
       periodOptions: data.periodOptions,
       scope: getStatisticsScope(req.session.user),
-      filters: statisticsFilters,
+      filters: { ...statisticsFilters, fonte: source },
       historyAvailable: data.historyAvailable,
       hasPeriodSnapshot: data.hasPeriodSnapshot,
       dataSource: data.dataSource,
@@ -816,9 +835,13 @@ router.post('/alunos/importar', ensureAuth, uploadStudentCsv, async (req, res) =
         continue;
       }
 
-      await createStudentWithAccount({ matricula: studentData.matricula, ...studentData.fields });
+      const account = await createStudentWithAccount({ matricula: studentData.matricula, ...studentData.fields });
       importedMatriculas.add(normalizedMatricula);
-      report.imported.push({ line: row.line, matricula: studentData.matricula });
+      report.imported.push({
+        line: row.line,
+        matricula: studentData.matricula,
+        credenciaisIniciais: initialCredentialsResponse(account)
+      });
     } catch (error) {
       const accountError = getStudentAccountProvisionError(error);
       if (accountError) {
@@ -909,9 +932,12 @@ router.post('/alunos', ensureAuth, async (req, res) => {
     const existingStudent = await getStudentByMatricula(studentData.matricula);
     if (existingStudent) return apiConflict(res, 'Já existe um aluno com esta matrícula.');
 
-    await createStudentWithAccount({ matricula: studentData.matricula, ...studentData.fields });
+    const account = await createStudentWithAccount({ matricula: studentData.matricula, ...studentData.fields });
     const aluno = await getVisibleStudentByMatricula(req.session.user, studentData.matricula, 0, { source: 'atual' });
-    return apiCreated(res, { aluno }, 'Aluno e conta de acesso cadastrados com sucesso.');
+    return apiCreated(res, {
+      aluno,
+      credenciaisIniciais: initialCredentialsResponse(account)
+    }, 'Aluno e conta de acesso cadastrados com sucesso. Guarde a senha temporária: ela não será exibida novamente.');
   } catch (error) {
     const accountError = getStudentAccountProvisionError(error);
     if (accountError?.status === 'conflict') return apiConflict(res, accountError.message);
@@ -919,6 +945,36 @@ router.post('/alunos', ensureAuth, async (req, res) => {
     if (isConstraintError(error)) return apiConflict(res, 'Já existe um aluno com esta matrícula.');
     console.error('Erro ao cadastrar aluno:', error.stack || error.message || error);
     return apiServerError(res, 'Não foi possível cadastrar o aluno.');
+  }
+});
+
+// Somente uma pessoa da equipe que já tenha permissão de edição no curso pode emitir
+// course-scoped edit access to that student's registration. The prior session
+// é invalidada na função de banco; assim, uma credencial perdida
+// deixa de funcionar depois da redefinição.
+router.post('/alunos/:matricula/credenciais/redefinir', ensureAuth, async (req, res) => {
+  if (!['Admin', 'Diretor', 'Coordenador'].includes(req.session.user.role)) {
+    return apiForbidden(res, 'Você não tem permissão para redefinir credenciais de aluno.');
+  }
+
+  const matricula = getText(req.params.matricula);
+  try {
+    const student = await getStudentByMatricula(matricula);
+    if (!student) return apiNotFound(res, 'Aluno não encontrado.');
+    if (!canEditStudent(req.session.user, student)) {
+      return apiForbidden(res, 'Você não pode redefinir as credenciais deste aluno.');
+    }
+
+    const account = await resetStudentTemporaryPassword(matricula);
+    if (!account) return apiNotFound(res, 'Conta de acesso do aluno não encontrada.');
+    return apiSuccess(res, {
+      credenciaisIniciais: initialCredentialsResponse(account)
+    }, 'Credencial temporária emitida. Guarde-a agora: ela não será exibida novamente.');
+  } catch (error) {
+    const accountError = getStudentAccountProvisionError(error);
+    if (accountError?.status === 'conflict') return apiConflict(res, accountError.message);
+    console.error('Erro ao redefinir credenciais do aluno:', error.stack || error.message || error);
+    return apiServerError(res, 'Não foi possível redefinir as credenciais do aluno.');
   }
 });
 
@@ -1044,9 +1100,9 @@ router.get('/turma-materias', ensureAuth, async (req, res) => {
   if (!turma) return apiBadRequest(res, 'Informe a turma.');
 
   try {
-    // This catalog is used to populate an editable enrollment form. It must
-    // reflect the current curriculum even when the selected academic period
-    // already has a closed snapshot.
+    // Este catálogo preenche o formulário de cadastro e precisa
+    // refletir as matérias atuais, mesmo se o período acadêmico selecionado
+    // já tiver sido encerrado e salvo.
     const data = await fetchVisibleStudents({ query: { fonte: 'atual' }, session: req.session });
     const alunosDaTurma = data.alunos.filter((aluno) => aluno.turma === turma);
     return apiSuccess(res, collectSubjectNames(alunosDaTurma));
@@ -1128,8 +1184,8 @@ router.post('/usuarios', ensureAuth, async (req, res) => {
   if (passwordError) return apiBadRequest(res, passwordError);
 
   try {
-    // Authentication checks username before matrícula. Reserving each active
-    // matrícula avoids resolving a student login to a staff account.
+    // O login consulta o nome de usuário antes da matrícula. Reservar cada
+    // matrícula ativa evita confundir a conta de aluno com uma conta da equipe.
     const studentWithSameIdentifier = await getStudentByMatricula(username);
     if (studentWithSameIdentifier) {
       return apiConflict(res, 'Este usuário coincide com a matrícula de um aluno cadastrado e está reservado para a conta estudantil.');
@@ -1208,9 +1264,9 @@ router.put('/usuarios/:id', ensureAuth, async (req, res) => {
     );
     if (!currentUser) return apiNotFound(res, 'Usuário não encontrado.');
 
-    // Student credentials are tied to the enrollment and may not be reused as
-    // staff credentials. This prevents a password from moving to another
-    // identity or permission scope through the generic user editor.
+    // A credencial do aluno pertence ao cadastro e não pode ser reutilizada como
+    // credencial de equipe. Assim, a senha não migra para outra
+    // identidade ou escopo de permissão pelo editor de usuários.
     if (currentUser.role === 'Aluno') {
       return apiBadRequest(res, STUDENT_ACCOUNT_MANAGEMENT_MESSAGE);
     }
@@ -1267,7 +1323,7 @@ router.delete('/usuarios/:id', ensureAuth, async (req, res) => {
     const result = await deleteStaffUserById(userId);
     if (!result || result.reason === 'not_found') return apiNotFound(res, 'Usuário não encontrado.');
     if (!result.deleted || result.reason === 'protected') {
-      return apiBadRequest(res, 'Somente contas de Professor ou Diretor podem ser excluídas nesta tela.');
+      return apiBadRequest(res, 'Somente contas de Professor, Coordenador ou Diretor podem ser excluídas nesta tela.');
     }
 
     const sessionDetail = result.deletedSessions > 0

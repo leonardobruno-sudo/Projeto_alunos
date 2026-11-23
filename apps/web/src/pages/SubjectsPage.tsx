@@ -9,6 +9,7 @@ import { StudentTable } from '../components/StudentTable'
 import {
   DEFAULT_PERIODS,
   canEditAssignedSubject,
+  canEditCourseStudents,
   canManageStudents,
   type ProfessorSubjectPayload,
   type Student,
@@ -43,12 +44,13 @@ export function SubjectsPage(props: SubjectsPageProps) {
     : <StaffSubjectsPage {...props} />
 }
 
-function StudentSubjectsPage({ user, onError }: SubjectsPageProps) {
+function StudentSubjectsPage({ user, onError, onMessage }: SubjectsPageProps) {
   const [filters, setFilters] = useState<Pick<StudentFilters, 'periodo' | 'fonte'>>({ periodo: 0, fonte: 'atual' })
   const [student, setStudent] = useState<Student | null>(null)
   const [periods, setPeriods] = useState(DEFAULT_PERIODS)
   const [metadata, setMetadata] = useState<AcademicSourceMetadata>(() => academicSourceMetadata(undefined, { periodo: 0, fonte: 'atual' }))
   const [loading, setLoading] = useState(true)
+  const [generatingPdf, setGeneratingPdf] = useState(false)
   const [error, setError] = useState('')
   const requestVersion = useRef(0)
   const requestController = useRef<AbortController | null>(null)
@@ -100,6 +102,25 @@ function StudentSubjectsPage({ user, onError }: SubjectsPageProps) {
 
   const periodName = metadata.currentPeriodName || periods[filters.periodo ?? 0] || DEFAULT_PERIODS[0]
 
+  const handleDownloadPdf = useCallback(async () => {
+    if (!student) return
+
+    setGeneratingPdf(true)
+    try {
+      const { downloadStudentBulletinPdf } = await import('../utils/studentBulletinPdf')
+      downloadStudentBulletinPdf({
+        periodName,
+        source: metadata.source,
+        student,
+      })
+      onMessage(`Boletim informativo de ${periodName} baixado em PDF.`)
+    } catch (downloadError) {
+      setError(onError(downloadError))
+    } finally {
+      setGeneratingPdf(false)
+    }
+  }, [metadata.source, onError, onMessage, periodName, student])
+
   return (
     <section className="page-stack">
       <div className="page-header">
@@ -108,9 +129,14 @@ function StudentSubjectsPage({ user, onError }: SubjectsPageProps) {
           <h1>Boletim</h1>
           <p className="muted">Consulte todas as suas matérias, notas e frequência em um único lugar.</p>
         </div>
-        <button className="button button-secondary" disabled={loading} onClick={() => void loadBulletin(filters)} type="button">
-          {loading ? 'Atualizando…' : 'Atualizar boletim'}
-        </button>
+        <div className="page-header-actions">
+          <button className="button button-secondary" disabled={loading} onClick={() => void loadBulletin(filters)} type="button">
+            {loading ? 'Atualizando…' : 'Atualizar boletim'}
+          </button>
+          <button className="button button-primary" disabled={loading || generatingPdf || !student} onClick={() => void handleDownloadPdf()} type="button">
+            {generatingPdf ? 'Gerando PDF…' : 'Baixar boletim (PDF)'}
+          </button>
+        </div>
       </div>
 
       <section aria-labelledby="bulletin-period-title" className="card bulletin-period-card">
@@ -288,6 +314,17 @@ function StaffSubjectsPage({ user, onMessage, onError }: SubjectsPageProps) {
     }
   }
 
+  async function resetStudentCredentials() {
+    if (!editingStudent) throw new Error('Nenhum aluno foi selecionado.')
+    try {
+      const result = await api.resetStudentCredentials(editingStudent.matricula)
+      onMessage(result.message || 'Senha temporária redefinida com sucesso.')
+      return result.data.credenciaisIniciais
+    } catch (requestError) {
+      throw new Error(onError(requestError))
+    }
+  }
+
   async function saveProfessorSubject(payload: ProfessorSubjectPayload): Promise<string> {
     if (!editingStudent) return ''
     if (isHistorical) throw new Error('O histórico fechado é somente para consulta.')
@@ -311,7 +348,7 @@ function StaffSubjectsPage({ user, onMessage, onError }: SubjectsPageProps) {
   }
 
   const periodName = metadata.currentPeriodName || DEFAULT_PERIODS[metadata.periodIndex] || DEFAULT_PERIODS[0]
-  const canChangeStudents = !isHistorical && (isProfessor || canManageStudents(user))
+  const canChangeStudents = !isHistorical && (isProfessor || canEditCourseStudents(user))
 
   return (
     <section className="page-stack">
@@ -420,6 +457,7 @@ function StaffSubjectsPage({ user, onMessage, onError }: SubjectsPageProps) {
             contextMessage={metadata.hasPeriodSnapshot ? 'Você está editando dados atuais. O histórico fechado do período permanece somente para consulta.' : undefined}
             onClose={() => setEditingStudent(null)}
             onLoadTurmaSubjects={loadTurmaSubjects}
+            onResetCredentials={['Admin', 'Diretor', 'Coordenador'].includes(user.role) ? resetStudentCredentials : undefined}
             onSave={saveStudent}
             student={editingStudent}
             userRole={user.role}

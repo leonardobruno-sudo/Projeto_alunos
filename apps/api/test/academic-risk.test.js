@@ -1,7 +1,11 @@
 /**
- * Regression coverage for the academic values shown in student tables. The
- * overall status must use the displayed overall values; a risk in one subject
- * stays attached to that subject in the Matérias screen.
+ * Papel de `academic-risk.test`: garante que um comportamento importante continue funcionando nos cenários descritos a seguir.
+ * Este arquivo recebe ou produz dados para os módulos indicados pelos imports e exports abaixo.
+ */
+/**
+ * Confere os valores acadêmicos exibidos nas tabelas de alunos. A situação
+ * geral deve refletir os indicadores consolidados; o alerta de uma matéria
+ * continua associado a ela na tela de Matérias.
  */
 'use strict';
 
@@ -45,8 +49,8 @@ const baseStudent = {
 
 test('uma matéria em risco não deixa a média geral regular vermelha', () => {
   const calculated = calculateRisk(baseStudent);
-  // Extra arguments used by the former period adjustment must no longer
-  // change a stored grade merely because the user selected another period.
+  // Argumentos extras usados pelo ajuste antigo de período não podem mais
+  // alterar uma nota salva apenas porque a pessoa selecionou outro período.
   const sameValuesInAnotherPeriod = calculateRisk(baseStudent, 5);
 
   assert.equal(calculated.nota_final, 80);

@@ -1,4 +1,5 @@
-/* Scoped visual layout for the academic statistics page and its SVG charts. */
+/* StatisticsPage: estiliza o componente ou a página que importa esta folha. As classes fazem a ponte entre estado visual, conteúdo e comandos dos componentes React. */
+/* Organiza o visual da página de estatísticas e dos gráficos SVG correspondentes. */
 
 .statistics-page {
   --statistics-chart-1: #455b92;
@@ -329,7 +330,8 @@
 }
 
 .statistics-pie-chart {
-  width: min(100%, 290px);
+  grid-area: chart;
+  width: min(100%, 340px);
   height: auto;
   aspect-ratio: 1;
   justify-self: center;
@@ -337,8 +339,19 @@
 
 .statistics-pie-figure {
   display: grid;
+  grid-template-areas: "summary chart";
+  grid-template-columns: minmax(0, 0.9fr) minmax(220px, 1.1fr);
+  align-items: center;
   gap: 8px;
   margin: 0;
+}
+
+.statistics-pie-summary {
+  display: grid;
+  grid-area: summary;
+  align-content: start;
+  gap: 14px;
+  min-width: 0;
 }
 
 .statistics-donut-hole {
@@ -350,7 +363,7 @@
   gap: 2px;
   color: var(--muted);
   font-size: 0.78rem;
-  text-align: center;
+  text-align: left;
 }
 
 .statistics-pie-caption strong {
@@ -376,17 +389,6 @@
   fill: var(--text);
   font-size: 11px;
   font-weight: 700;
-}
-
-.statistics-pie-total {
-  font-size: 13px;
-}
-
-.statistics-pie-value {
-  fill: var(--text);
-  font-family: inherit;
-  font-size: 24px;
-  font-weight: 800;
 }
 
 .statistics-pie-sector-label {
@@ -520,6 +522,15 @@
     grid-template-columns: 1fr;
   }
 
+  .statistics-pie-figure {
+    grid-template-areas: "summary" "chart";
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .statistics-pie-summary {
+    gap: 10px;
+  }
+
   .statistics-filter-heading {
     align-items: stretch;
     flex-direction: column;
@@ -544,10 +555,22 @@
 }
 
 @media print {
+  @page {
+    size: A4 portrait;
+    margin: 12mm;
+  }
+
+  :root {
+    print-color-adjust: exact;
+    -webkit-print-color-adjust: exact;
+  }
+
   .sidebar,
   .statistics-admin-filters,
   .statistics-source-actions,
   .statistics-toolbar,
+  .skip-link,
+  .statistics-page > [role='alert'],
   .toast {
     display: none !important;
   }
@@ -562,6 +585,27 @@
 
   .statistics-page {
     gap: 16px;
+    color: #111111 !important;
+    background: #ffffff !important;
+    --text: #111111;
+    --muted: #333333;
+    --border: #777777;
+    --surface: #ffffff;
+    --surface-muted: #f4f4f4;
+    --statistics-chart-1: #174a7e;
+    --statistics-chart-2: #005a34;
+    --statistics-chart-3: #8a3b00;
+    --statistics-chart-4: #5b2a86;
+    --statistics-chart-5: #006461;
+    --statistics-chart-6: #9a1b1b;
+  }
+
+  .statistics-page .muted,
+  .statistics-page .statistics-scope,
+  .statistics-page .statistics-filter-summary,
+  .statistics-page .statistics-pie-caption,
+  .statistics-page .statistics-chart-legend {
+    color: #333333 !important;
   }
 
   .statistics-chart-card,
@@ -569,5 +613,13 @@
   .statistics-metric {
     break-inside: avoid;
     box-shadow: none;
+  }
+
+  .statistics-chart-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .statistics-chart {
+    min-height: 0;
   }
 }

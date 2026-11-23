@@ -1,5 +1,9 @@
 /**
- * Isolated SQLite checks for orphan student-account cleanup. The test uses a
+ * Papel de `student-account-cleanup.test`: garante que um comportamento importante continue funcionando nos cenários descritos a seguir.
+ * Este arquivo recebe ou produz dados para os módulos indicados pelos imports e exports abaixo.
+ */
+/**
+ * Confere a limpeza de contas de alunos órfãs em um SQLite isolado. O teste usa um
  * temporary database so it never reads or changes the application's data.
  */
 const assert = require('node:assert/strict');
@@ -83,8 +87,8 @@ test('limpeza de contas de aluno órfãs', async (t) => {
       ['ORFA-01', 0, '{"periodIndex":0,"student":{"matricula":"ORFA-01"}}', new Date().toISOString()]
     );
 
-    // Calling setup again exercises the automatic startup path, not only the
-    // exported maintenance helper.
+    // Chamar a inicialização outra vez testa o fluxo automático de partida, e não apenas
+    // a função de manutenção exportada.
     await setupDatabase();
 
     assert.ok(await getSql('SELECT id FROM usuarios WHERE id = ?', [activeStudentAccount]));
@@ -120,14 +124,15 @@ test('limpeza de contas de aluno órfãs', async (t) => {
     });
 
     const replacementAccount = await getSql(
-      'SELECT id, username, matricula, nome, password FROM usuarios WHERE lower(trim(username)) = ?',
+      'SELECT id, username, matricula, nome, password, must_change_password FROM usuarios WHERE lower(trim(username)) = ?',
       ['reuso-01']
     );
     assert.ok(replacementAccount);
     assert.notEqual(replacementAccount.id, obsoleteAccount);
     assert.equal(replacementAccount.matricula, 'REUSO-01');
     assert.equal(replacementAccount.nome, 'Novo Aluno');
-    assert.ok(verifyPassword(getInitialStudentPassword('REUSO-01', 'Novo Aluno'), replacementAccount.password));
+    assert.equal(replacementAccount.must_change_password, 1);
+    assert.equal(verifyPassword(getInitialStudentPassword('REUSO-01', 'Novo Aluno'), replacementAccount.password), false);
     assert.equal(await getSql('SELECT id FROM usuarios WHERE id = ?', [obsoleteAccount]), undefined);
     assert.equal(await getSql('SELECT sid FROM sessoes WHERE sid = ?', ['sessao-reuso']), undefined);
     assert.ok(await getSql('SELECT matricula FROM historico_academico WHERE matricula = ? AND periodo = ?', ['REUSO-01', 1]));

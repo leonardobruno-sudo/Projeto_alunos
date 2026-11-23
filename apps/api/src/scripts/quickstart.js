@@ -1,6 +1,10 @@
 /**
- * Builds the React client through the npm script and opens the URL emitted by
- * the Express server. It is the implementation behind `npm run quickstart`.
+ * Papel de `quickstart`: automatiza uma tarefa administrativa ou de inicialização a partir do servidor e do banco SQLite.
+ * Este arquivo recebe ou produz dados para os módulos indicados pelos imports e exports abaixo.
+ */
+/**
+ * Compila a interface React pelo comando npm e abre o endereço disponibilizado
+ * pelo servidor Express. Este script executa `npm run quickstart`.
  */
 const { spawn } = require('child_process');
 const path = require('path');

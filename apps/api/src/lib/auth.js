@@ -1,6 +1,10 @@
 /**
- * Authentication domain service for credential validation, safe legacy
- * student migration and password changes without exposing password hashes.
+ * Papel de `auth`: oferece recursos compartilhados ao servidor, como sessão, permissões, respostas e acesso ao banco.
+ * Este arquivo recebe ou produz dados para os módulos indicados pelos imports e exports abaixo.
+ */
+/**
+ * Serviço de autenticação para validar credenciais, migrar com segurança contas antigas
+ * de alunos e permitir troca de senha sem revelar hashes.
  */
 const crypto = require('crypto');
 const { getSql, allSql, runSql } = require('./database');
@@ -51,6 +55,7 @@ function normalizeUser(userRow) {
     disciplina: userRow.disciplina,
     turma: userRow.turma,
     sessionVersion: Number(userRow.session_version) || 0,
+    mustChangePassword: Number(userRow.must_change_password) === 1,
     hasProfilePhoto: hasProfilePhoto(userRow),
     profilePhotoVersion: profilePhotoVersion(userRow)
   };
@@ -87,11 +92,11 @@ async function findExistingUser(normalizedLogin) {
   );
   if (byMatricula) return { user: byMatricula, ambiguous: false };
 
-  // Names are convenience identifiers only for non-admin accounts. Multiple
-  // matches deliberately fail instead of choosing an arbitrary account.
+  // Para contas que não são de Admin, o nome serve apenas como identificador auxiliar.
+  // Se houver mais de uma correspondência, o acesso falha em vez de escolher ao acaso.
   const usersByName = await allSql(
     `SELECT * FROM usuarios
-     WHERE role IN ('Aluno', 'Professor', 'Diretor') AND lower(trim(nome)) = ?`,
+     WHERE role IN ('Aluno', 'Professor', 'Coordenador', 'Diretor') AND lower(trim(nome)) = ?`,
     [normalizedLogin]
   );
   if (usersByName.length === 1) return { user: usersByName[0], ambiguous: false };
@@ -131,7 +136,9 @@ async function migrateStoredLegacyPassword(user, passwordInput) {
 
   const result = await runSql(
     `UPDATE usuarios
-     SET password = ?, session_version = COALESCE(session_version, 0) + 1
+     SET password = ?,
+         must_change_password = 1,
+         session_version = COALESCE(session_version, 0) + 1
      WHERE id = ? AND password = ?`,
     [hashPassword(passwordInput), user.id, user.password]
   );
@@ -149,8 +156,8 @@ async function authenticateLegacyStudent(normalizedLogin, passwordInput) {
     throw authenticationError();
   }
 
-  // Do not use INSERT OR IGNORE: a matrícula that collides with an existing
-  // username must fail safely instead of authenticating the wrong account.
+  // Não use `INSERT OR IGNORE`: se a matrícula coincidir com um usuário existente,
+  // a operação deve falhar com segurança, sem autenticar a conta errada.
   const normalizedMatricula = normalizeLookupValue(lookup.student.matricula);
   const existingUsername = await getSql(
     'SELECT id FROM usuarios WHERE lower(trim(username)) = ?',
@@ -164,8 +171,9 @@ async function authenticateLegacyStudent(normalizedLogin, passwordInput) {
 
   try {
     const result = await runSql(
-      `INSERT INTO usuarios (username, password, role, matricula, nome, curso, disciplina, turma)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO usuarios (
+         username, password, role, matricula, nome, curso, disciplina, turma, must_change_password
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         lookup.student.matricula,
         hashPassword(passwordInput),
@@ -174,7 +182,8 @@ async function authenticateLegacyStudent(normalizedLogin, passwordInput) {
         lookup.student.nome,
         lookup.student.curso,
         lookup.student.disciplina,
-        lookup.student.turma
+        lookup.student.turma,
+        1
       ]
     );
     const createdUser = await getSql('SELECT * FROM usuarios WHERE id = ?', [result.lastID]);
@@ -212,7 +221,11 @@ async function changePassword(userId, currentPassword, newPassword) {
   }
 
   await runSql(
-    'UPDATE usuarios SET password = ?, session_version = COALESCE(session_version, 0) + 1 WHERE id = ?',
+    `UPDATE usuarios
+     SET password = ?,
+         must_change_password = 0,
+         session_version = COALESCE(session_version, 0) + 1
+     WHERE id = ?`,
     [hashPassword(newPassword), user.id]
   );
   const updatedUser = await getSql('SELECT * FROM usuarios WHERE id = ?', [user.id]);

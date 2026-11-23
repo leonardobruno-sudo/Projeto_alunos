@@ -1,0 +1,769 @@
+/* AcademicLifePage: estiliza o componente ou a página que importa esta folha. As classes fazem a ponte entre estado visual, conteúdo e comandos dos componentes React. */
+/* Mantém os estilos da Vida Acadêmica isolados para reutilizar o recurso em outras telas. */
+
+.academic-life-page {
+  max-width: 1280px;
+}
+
+.academic-page-header {
+  align-items: flex-end;
+}
+
+.academic-scope,
+.academic-period-status {
+  display: inline-flex;
+  max-width: 320px;
+  align-items: center;
+  border: 1px solid color-mix(in srgb, var(--primary) 26%, var(--border));
+  border-radius: 999px;
+  background: var(--primary-soft);
+  color: var(--primary);
+  padding: 7px 11px;
+  font-size: 0.79rem;
+  font-weight: 750;
+  line-height: 1.25;
+}
+
+.academic-loading-state,
+.academic-error-state {
+  min-height: 180px;
+  display: grid;
+  align-content: center;
+  justify-items: start;
+  gap: 10px;
+}
+
+.academic-error-state h2,
+.academic-error-state p {
+  margin: 0;
+}
+
+.academic-error-state p {
+  color: var(--muted);
+}
+
+.academic-refreshing,
+.academic-updated-at {
+  margin: -8px 0 0;
+  color: var(--muted);
+  font-size: 0.84rem;
+}
+
+.academic-refreshing {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--primary);
+  font-weight: 700;
+}
+
+.academic-refreshing::before {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: currentColor;
+  content: "";
+}
+
+.academic-period-card {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 20px;
+}
+
+.academic-period-card h2 {
+  margin: 0 0 5px;
+}
+
+.academic-period-card .eyebrow {
+  margin-bottom: 5px;
+}
+
+.academic-period-card .muted {
+  margin: 0;
+}
+
+.academic-period-controls {
+  display: flex;
+  min-width: min(100%, 215px);
+  align-items: flex-end;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.academic-period-select {
+  display: grid;
+  min-width: 195px;
+  gap: 6px;
+  color: var(--text);
+  font-size: 0.8rem;
+  font-weight: 750;
+}
+
+.academic-period-select select {
+  min-height: 40px;
+}
+
+.academic-section-tabs {
+  display: flex;
+  overflow-x: auto;
+  gap: 7px;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 1px;
+  scrollbar-width: thin;
+}
+
+.academic-section-tab {
+  flex: 0 0 auto;
+  border: 0;
+  border-bottom: 3px solid transparent;
+  background: transparent;
+  color: var(--muted);
+  padding: 10px 12px 9px;
+  font-size: 0.88rem;
+  font-weight: 750;
+}
+
+.academic-section-tab:hover {
+  color: var(--primary);
+}
+
+.academic-section-tab.active {
+  border-bottom-color: var(--primary);
+  color: var(--primary);
+}
+
+.academic-content-card {
+  min-height: 300px;
+}
+
+.academic-content-card:focus-visible {
+  outline: 3px solid color-mix(in srgb, var(--primary) 44%, transparent);
+  outline-offset: 4px;
+}
+
+.academic-overview {
+  display: grid;
+  gap: 28px;
+}
+
+.academic-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.academic-summary-card {
+  display: grid;
+  min-height: 112px;
+  align-content: start;
+  gap: 5px;
+  border: 1px solid var(--border);
+  border-radius: 11px;
+  background: var(--surface-muted);
+  padding: 16px;
+}
+
+.academic-summary-card span,
+.academic-summary-card small {
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 650;
+}
+
+.academic-summary-card strong {
+  color: var(--text);
+  font-size: clamp(1.45rem, 2.4vw, 2rem);
+  line-height: 1.08;
+}
+
+.academic-summary-card--risk {
+  border-color: color-mix(in srgb, var(--danger) 35%, var(--border));
+  background: var(--danger-soft);
+}
+
+.academic-summary-card--risk strong {
+  color: var(--danger);
+}
+
+.academic-overview-section {
+  display: grid;
+  gap: 14px;
+}
+
+.academic-subject-grid,
+.academic-assessment-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 14px;
+}
+
+.academic-subject-card,
+.academic-assessment-card,
+.academic-diary-entry {
+  display: grid;
+  align-content: start;
+  gap: 13px;
+  border: 1px solid var(--border);
+  border-radius: 11px;
+  background: var(--surface-muted);
+  padding: 17px;
+}
+
+.academic-subject-card h3,
+.academic-assessment-card h3,
+.academic-diary-entry h3,
+.academic-document-item h3,
+.academic-timeline-content h3 {
+  margin: 0;
+  color: var(--text);
+  font-size: 1rem;
+  line-height: 1.35;
+}
+
+.academic-subject-kicker {
+  display: block;
+  color: var(--primary);
+  font-size: 0.74rem;
+  font-weight: 800;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.academic-detail-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 18px;
+  margin: 0;
+}
+
+.academic-detail-list > div {
+  display: grid;
+  min-width: 92px;
+  gap: 2px;
+}
+
+.academic-detail-list dt {
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 760;
+}
+
+.academic-detail-list dd {
+  margin: 0;
+  color: var(--text);
+  font-size: 0.84rem;
+  font-weight: 650;
+}
+
+.academic-subject-link {
+  width: fit-content;
+  border: 0;
+  background: transparent;
+  color: var(--primary);
+  padding: 0;
+  font-size: 0.84rem;
+  font-weight: 800;
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, currentColor 45%, transparent);
+  text-underline-offset: 3px;
+}
+
+.academic-subject-link:hover {
+  color: var(--primary-hover);
+  text-decoration-color: currentColor;
+}
+
+.academic-empty-state {
+  display: grid;
+  min-height: 180px;
+  place-content: center;
+  justify-items: center;
+  border: 1px dashed var(--border);
+  border-radius: 10px;
+  background: var(--surface-muted);
+  color: var(--muted);
+  padding: 24px;
+  text-align: center;
+}
+
+.academic-empty-state strong {
+  color: var(--text);
+}
+
+.academic-empty-state p {
+  max-width: 510px;
+  margin: 7px 0 0;
+  font-size: 0.9rem;
+}
+
+.academic-timeline {
+  display: grid;
+  gap: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.academic-timeline-item {
+  position: relative;
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr);
+  gap: 13px;
+  padding: 0 0 20px;
+}
+
+.academic-timeline-item:not(:last-child)::before {
+  position: absolute;
+  top: 19px;
+  bottom: 0;
+  left: 9px;
+  width: 2px;
+  background: var(--border);
+  content: "";
+}
+
+.academic-timeline-marker {
+  z-index: 1;
+  width: 20px;
+  height: 20px;
+  border: 5px solid var(--primary-soft);
+  border-radius: 999px;
+  background: var(--primary);
+}
+
+.academic-timeline-content {
+  display: grid;
+  gap: 7px;
+  min-width: 0;
+  padding: 0 0 6px;
+}
+
+.academic-timeline-content p,
+.academic-document-item p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.9rem;
+  line-height: 1.55;
+}
+
+.academic-item-meta,
+.academic-diary-entry-header,
+.academic-assessment-heading,
+.academic-document-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.academic-item-meta {
+  align-items: center;
+}
+
+.academic-item-meta time {
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 650;
+  text-align: right;
+}
+
+.academic-linked-subject {
+  color: var(--primary);
+  font-size: 0.84rem;
+  font-weight: 750;
+}
+
+.academic-diary-list {
+  display: grid;
+  gap: 13px;
+}
+
+.academic-session-content,
+.academic-feedback {
+  margin: 0;
+  border-left: 3px solid var(--primary);
+  color: var(--text);
+  padding-left: 11px;
+  font-size: 0.89rem;
+  line-height: 1.55;
+}
+
+.academic-table-wrap {
+  margin: -2px;
+}
+
+.academic-table {
+  min-width: 800px;
+}
+
+.academic-table caption {
+  padding: 0 2px 13px;
+  color: var(--muted);
+  font-size: 0.83rem;
+  font-weight: 600;
+  text-align: left;
+}
+
+.academic-table tbody th {
+  color: var(--text);
+  font-size: 0.88rem;
+  font-weight: 750;
+  letter-spacing: normal;
+  text-transform: none;
+}
+
+.academic-table th:not(:first-child),
+.academic-table td:not(:first-child) {
+  font-variant-numeric: tabular-nums;
+}
+
+.academic-status {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  background: var(--surface-muted);
+  color: var(--muted);
+  padding: 4px 8px;
+  font-size: 0.72rem;
+  font-weight: 780;
+  line-height: 1.15;
+  white-space: nowrap;
+}
+
+.academic-status--regular,
+.academic-status--realizada,
+.academic-status--corrigida,
+.academic-status--disponivel,
+.academic-status--presente {
+  background: var(--success-soft);
+  color: var(--success);
+}
+
+.academic-status--alerta,
+.academic-status--prevista,
+.academic-status--em_analise,
+.academic-status--justificada,
+.academic-status--prazo,
+.academic-status--avaliacao {
+  background: var(--warning-soft);
+  color: var(--warning);
+}
+
+.academic-status--risco,
+.academic-status--cancelada,
+.academic-status--ausente {
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+.academic-status--letivo,
+.academic-status--outro,
+.academic-status--encerrada,
+.academic-status--nao_lancada,
+.academic-status--recesso {
+  background: var(--primary-soft);
+  color: var(--primary);
+}
+
+.academic-document-list {
+  display: grid;
+  gap: 11px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.academic-document-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface-muted);
+  padding: 16px;
+}
+
+.academic-document-item > div {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.academic-document-item small {
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 600;
+}
+
+.academic-management-panel {
+  display: grid;
+  gap: 18px;
+}
+
+.academic-management-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.academic-management-tab {
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--muted);
+  padding: 8px 12px;
+  font-size: 0.84rem;
+  font-weight: 750;
+}
+
+.academic-management-tab:hover {
+  border-color: var(--primary);
+  color: var(--primary);
+}
+
+.academic-management-tab.active {
+  border-color: var(--primary);
+  background: var(--primary-soft);
+  color: var(--primary);
+}
+
+.academic-management-content {
+  border-top: 1px solid var(--border);
+  padding-top: 18px;
+}
+
+.academic-management-form {
+  display: grid;
+  gap: 16px;
+}
+
+.academic-form-heading h3,
+.academic-form-heading p {
+  margin: 0;
+}
+
+.academic-form-heading p {
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 0.87rem;
+}
+
+.academic-form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 13px;
+}
+
+.academic-form-grid > label {
+  display: grid;
+  gap: 6px;
+  color: var(--text);
+  font-size: 0.84rem;
+  font-weight: 700;
+}
+
+.academic-form-grid .academic-field-wide {
+  grid-column: 1 / -1;
+}
+
+.academic-checkbox-field {
+  display: flex !important;
+  min-height: 40px;
+  align-items: center;
+  align-self: end;
+  gap: 9px !important;
+}
+
+.academic-checkbox-field input {
+  width: 17px;
+  height: 17px;
+  margin: 0;
+  accent-color: var(--primary);
+}
+
+.academic-form-saving {
+  margin: 0;
+  color: var(--primary);
+  font-size: 0.86rem;
+  font-weight: 750;
+}
+
+.academic-management-unavailable {
+  border: 1px dashed var(--border);
+  border-radius: 9px;
+  background: var(--surface-muted);
+  color: var(--muted);
+  padding: 16px;
+  font-size: 0.88rem;
+  line-height: 1.55;
+}
+
+.academic-record-maintenance {
+  display: grid;
+  gap: 18px;
+}
+
+.academic-record-group {
+  display: grid;
+  gap: 9px;
+}
+
+.academic-record-group > h3 {
+  margin: 0;
+  font-size: 0.94rem;
+}
+
+.academic-record-group > h3 span {
+  color: var(--muted);
+  font-size: 0.8rem;
+  font-weight: 650;
+}
+
+.academic-record-list {
+  display: grid;
+  gap: 8px;
+}
+
+.academic-record-editor {
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-muted);
+  padding: 0 13px;
+}
+
+.academic-record-editor > summary {
+  display: flex;
+  min-height: 48px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  cursor: pointer;
+  color: var(--text);
+}
+
+.academic-record-editor > summary > span:first-child {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.academic-record-editor > summary strong {
+  overflow-wrap: anywhere;
+  font-size: 0.86rem;
+}
+
+.academic-record-editor > summary small,
+.academic-record-updated {
+  color: var(--muted);
+  font-size: 0.75rem;
+}
+
+.academic-record-editor > summary:focus-visible {
+  border-radius: 4px;
+  outline: 3px solid var(--primary);
+  outline-offset: 3px;
+}
+
+.academic-record-editor[open] > summary {
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 14px;
+}
+
+.academic-record-editor .academic-management-form {
+  padding-bottom: 14px;
+}
+
+@media (max-width: 960px) {
+  .academic-summary-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 760px) {
+  .academic-page-header,
+  .academic-period-card {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .academic-period-controls {
+    width: 100%;
+    justify-content: flex-start;
+  }
+
+  .academic-period-select {
+    flex: 1 1 210px;
+  }
+
+  .academic-content-card {
+    padding: 17px;
+  }
+
+  .academic-document-item,
+  .academic-diary-entry-header,
+  .academic-assessment-heading {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .academic-document-item .button {
+    width: 100%;
+  }
+
+  .academic-record-editor > summary {
+    align-items: flex-start;
+    flex-direction: column;
+    justify-content: center;
+    gap: 4px;
+    padding: 8px 0;
+  }
+
+  .academic-form-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .academic-form-grid .academic-field-wide {
+    grid-column: auto;
+  }
+}
+
+@media (max-width: 480px) {
+  .academic-summary-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .academic-summary-card {
+    min-height: 94px;
+  }
+
+  .academic-timeline-item {
+    grid-template-columns: 18px minmax(0, 1fr);
+    gap: 10px;
+  }
+
+  .academic-timeline-marker {
+    width: 18px;
+    height: 18px;
+    border-width: 4px;
+  }
+
+  .academic-timeline-item:not(:last-child)::before {
+    top: 17px;
+    left: 8px;
+  }
+
+  .academic-item-meta {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 5px;
+  }
+
+  .academic-item-meta time {
+    text-align: left;
+  }
+}

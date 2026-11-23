@@ -1,4 +1,13 @@
-/** Editor deliberately limited to the one subject assigned to a professor. */
+/** Papel de `ProfessorSubjectEditor`: apresenta e coleta dados em um componente reutilizável, recebendo estado e ações da página que o utiliza.
+ * Ele se conecta aos serviços e componentes importados e entrega sua saída a quem o consome.
+ */
+
+/**
+ * Editor enxuto da matéria atribuída ao professor atual.
+ * Recebe aluno, disciplina e ações da tela chamadora; envia os valores editados
+ * de volta para que a página os grave pela API. O servidor repete a checagem
+ * da disciplina, pois ocultar outras matérias aqui não é uma barreira de acesso.
+ */
 
 import { useId, useState, type FormEvent } from 'react'
 import type { ProfessorSubjectPayload, Student, Subject } from '../types'

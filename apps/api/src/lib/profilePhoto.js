@@ -1,4 +1,8 @@
-/** Validation helpers for private profile-photo uploads. */
+/**
+ * Papel de `profilePhoto`: oferece recursos compartilhados ao servidor, como sessão, permissões, respostas e acesso ao banco.
+ * Este arquivo recebe ou produz dados para os módulos indicados pelos imports e exports abaixo.
+ */
+/** Valida imagens de perfil antes de o servidor armazená-las de forma privada. */
 
 const MAX_PROFILE_PHOTO_SIZE = 2 * 1024 * 1024;
 

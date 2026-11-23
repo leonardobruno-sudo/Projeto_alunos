@@ -1,4 +1,4 @@
-/* Global visual tokens and responsive styles for the React application. */
+/* Define estilos globais e ajustes responsivos da interface React. */
 
 :root {
   color: #1d2939;
@@ -123,6 +123,46 @@ textarea {
 textarea {
   min-height: 80px;
   resize: vertical;
+}
+
+.password-input-field {
+  display: grid;
+  min-width: 0;
+  gap: 6px;
+  color: var(--text);
+  font-size: 0.85rem;
+  font-weight: 680;
+}
+
+.password-input {
+  position: relative;
+  display: block;
+  width: 100%;
+}
+
+.password-input > input {
+  padding-right: 48px;
+}
+
+.password-visibility-toggle {
+  position: absolute;
+  top: 50%;
+  right: 6px;
+  display: grid;
+  width: 36px;
+  height: 36px;
+  transform: translateY(-50%);
+  place-items: center;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.password-visibility-toggle:hover {
+  background: var(--surface-muted);
+  color: var(--text);
 }
 
 input:focus,
@@ -560,6 +600,13 @@ h3 {
   align-items: flex-end;
 }
 
+.page-header-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
 .page-header p,
 .section-heading p,
 .subject-card-heading p {
@@ -576,6 +623,75 @@ h3 {
   background: var(--surface);
   box-shadow: 0 1px 2px rgba(16, 24, 40, 0.02);
   padding: 22px;
+}
+
+.research-page {
+  display: grid;
+  gap: 18px;
+  max-width: 1400px;
+  margin: 0 auto;
+}
+
+.research-metrics,
+.research-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 14px;
+}
+
+.research-metrics article,
+.research-model {
+  display: grid;
+  gap: 8px;
+  padding: 18px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+}
+
+.research-metrics span,
+.research-model span,
+.research-card small {
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.research-metrics strong {
+  font-size: 1.7rem;
+}
+
+.research-card {
+  display: grid;
+  gap: 14px;
+  min-width: 0;
+}
+
+.research-card h2,
+.research-card p {
+  margin: 0;
+}
+
+.research-json,
+.research-model pre {
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 0.84rem;
+}
+
+.research-model pre {
+  overflow: auto;
+  max-height: 240px;
+  margin: 0;
+  padding: 12px;
+  border-radius: 8px;
+  background: var(--surface-muted);
+  color: var(--text);
+}
+
+@media (max-width: 700px) {
+  .research-page .page-header {
+    align-items: flex-start;
+    flex-direction: column;
+  }
 }
 
 .button {
@@ -653,6 +769,90 @@ h3 {
   border-color: color-mix(in srgb, var(--primary) 32%, transparent);
   background: var(--primary-soft);
   color: var(--text);
+}
+
+.alert-warning {
+  border-color: color-mix(in srgb, #a96700 42%, transparent);
+  background: color-mix(in srgb, #f5b942 16%, var(--surface));
+  color: var(--text);
+}
+
+.initial-credentials-card {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin: 14px 0;
+}
+
+.initial-credentials-card h3,
+.initial-credentials-card p {
+  margin: 0;
+}
+
+.initial-credentials-card p {
+  margin-top: 5px;
+}
+
+.initial-credentials-values {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px 24px;
+  margin: 11px 0 0;
+}
+
+.initial-credentials-values div {
+  display: grid;
+  gap: 2px;
+}
+
+.initial-credentials-values dt {
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.initial-credentials-values dd {
+  margin: 0;
+}
+
+.initial-credentials-values code {
+  display: inline-block;
+  border-radius: 5px;
+  background: color-mix(in srgb, var(--text) 8%, transparent);
+  padding: 3px 6px;
+  color: var(--text);
+  font-size: 0.92rem;
+  overflow-wrap: anywhere;
+}
+
+.initial-credentials-batch {
+  margin-top: 18px;
+}
+
+.initial-credentials-batch > h4,
+.initial-credentials-batch > p {
+  margin: 0;
+}
+
+.initial-credentials-batch > p {
+  margin-top: 4px;
+}
+
+.student-editor-credentials {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  margin: 0 0 16px;
+  border-radius: 8px;
+  background: var(--surface-muted);
+  padding: 12px;
+}
+
+.student-editor-credentials p {
+  margin: 0;
+  font-size: 0.86rem;
 }
 
 .data-source-notice strong {
@@ -906,7 +1106,7 @@ tbody tr:hover {
   font-size: 0.79rem;
 }
 
-/* Student descriptions are discoverable without exposing the full text in the table. */
+/* Permite consultar descrições de alunos sem ocupar a tabela com o texto completo. */
 .student-description-trigger {
   position: relative;
   display: inline-flex;
@@ -1032,7 +1232,7 @@ tbody tr:hover {
   color: var(--muted);
 }
 
-/* The bulletin keeps each student's subjects in one readable, scrollable table. */
+/* Reúne as matérias de cada aluno em uma tabela de boletim legível e rolável. */
 .student-bulletin-card {
   display: grid;
   gap: 18px;
@@ -1395,6 +1595,14 @@ tbody tr:hover {
   .inline-action {
     align-items: flex-start;
     flex-direction: column;
+  }
+
+  .page-header-actions {
+    width: 100%;
+  }
+
+  .page-header-actions .button {
+    flex: 1 1 180px;
   }
 
   .filter-bar,

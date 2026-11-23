@@ -1,6 +1,10 @@
 /**
- * Authorization regression tests for staff roles. They use an isolated
- * database and make sure a professor only receives their assigned subject.
+ * Papel de `role-permissions.test`: garante que um comportamento importante continue funcionando nos cenários descritos a seguir.
+ * Este arquivo recebe ou produz dados para os módulos indicados pelos imports e exports abaixo.
+ */
+/**
+ * Confere as permissões dos perfis de equipe em um banco isolado
+ * e garante que o professor receba somente a matéria que lhe foi atribuída.
  */
 'use strict';
 

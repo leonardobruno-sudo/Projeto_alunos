@@ -1,15 +1,17 @@
-/** Authentication middleware that validates the current database-backed session. */
+/**
+ * Papel de `helpers`: oferece recursos compartilhados ao servidor, como sessão, permissões, respostas e acesso ao banco.
+ * Este arquivo recebe ou produz dados para os módulos indicados pelos imports e exports abaixo.
+ */
+/** Middleware que confirma a sessão atual consultando o armazenamento do servidor. */
 
 const { getSql } = require('./database');
 
 /**
- * src/lib/helpers.js
+ * Arquivo: `src/lib/helpers.js`.
  *
- * Authentication middleware.
+ * Middleware de autenticação.
  *
- * Used by:
- *   - src/routes/api.js
- *   - src/routes/auth.js
+ * Usado pelas rotas da API e de autenticação.
  */
 function sendUnauthenticated(req, res) {
   if (req.originalUrl.startsWith('/api/')) {
@@ -22,6 +24,23 @@ function sendUnauthenticated(req, res) {
   return res.redirect('/login');
 }
 
+function canUseRouteBeforePasswordChange(req) {
+  const pathname = new URL(req.originalUrl || '', 'http://sgac.local').pathname;
+  return (req.method === 'GET' && pathname === '/api/auth/me') ||
+    (req.method === 'POST' && pathname === '/api/auth/password') ||
+    (req.method === 'POST' && pathname === '/api/auth/logout');
+}
+
+function sendPasswordChangeRequired(res) {
+  return res.status(403).json({
+    success: false,
+    error: {
+      code: 'password_change_required',
+      message: 'Troque sua senha temporária antes de acessar o sistema.'
+    }
+  });
+}
+
 async function ensureAuth(req, res, next) {
   const userId = Number(req.session.user?.id);
   if (!Number.isInteger(userId) || userId < 1) {
@@ -31,7 +50,7 @@ async function ensureAuth(req, res, next) {
   try {
     const user = await getSql(
       `SELECT id, username, role, matricula, nome, curso, disciplina, turma,
-              session_version, foto_perfil_versao,
+              session_version, must_change_password, foto_perfil_versao,
               CASE WHEN foto_perfil IS NOT NULL AND length(foto_perfil) > 0 THEN 1 ELSE 0 END AS has_profile_photo
        FROM usuarios
        WHERE id = ?`,
@@ -58,9 +77,13 @@ async function ensureAuth(req, res, next) {
       disciplina: user.disciplina,
       turma: user.turma,
       sessionVersion: currentVersion,
+      mustChangePassword: Number(user.must_change_password) === 1,
       hasProfilePhoto: Number(user.has_profile_photo) === 1,
       profilePhotoVersion: Number(user.foto_perfil_versao) || 0
     };
+    if (req.session.user.mustChangePassword && !canUseRouteBeforePasswordChange(req)) {
+      return sendPasswordChangeRequired(res);
+    }
     return next();
   } catch (error) {
     console.error('Erro ao validar sessão:', error.stack || error.message || error);
@@ -75,5 +98,6 @@ async function ensureAuth(req, res, next) {
 }
 
 module.exports = {
-  ensureAuth
+  ensureAuth,
+  canUseRouteBeforePasswordChange
 };

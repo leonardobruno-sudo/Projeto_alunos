@@ -1,4 +1,8 @@
-/** Controls and explains whether academic data comes from the live record or a saved period. */
+/** Papel de `DataSourceControls`: apresenta e coleta dados em um componente reutilizável, recebendo estado e ações da página que o utiliza.
+ * Ele se conecta aos serviços e componentes importados e entrega sua saída a quem o consome.
+ */
+
+/** Permite escolher e explica se os dados vêm do cadastro atual ou do período salvo. */
 
 import type { AcademicDataSource } from '../types'
 

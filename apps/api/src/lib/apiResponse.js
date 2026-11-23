@@ -1,7 +1,11 @@
 /**
+ * Papel de `apiResponse`: oferece recursos compartilhados ao servidor, como sessão, permissões, respostas e acesso ao banco.
+ * Este arquivo recebe ou produz dados para os módulos indicados pelos imports e exports abaixo.
+ */
+/**
  * src/lib/apiResponse.js
  *
- * Standardized JSON responses for all /api routes.
+ * Padroniza respostas JSON para todas as rotas `/api`.
  *
  * Used by: src/routes/api.js
  */

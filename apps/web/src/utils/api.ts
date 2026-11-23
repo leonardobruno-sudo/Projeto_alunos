@@ -1,13 +1,24 @@
-/** Same-origin HTTP client used by the React interface to call the API. */
+/** Papel de `api`: transforma, valida ou transporta dados entre a interface e os formatos usados pela API ou por arquivos exportados.
+ * Ele se conecta aos serviços e componentes importados e entrega sua saída a quem o consome.
+ */
+
+/**
+ * Cliente HTTP da interface: encaminha chamadas `/api` ao servidor de mesma origem.
+ * Mantém o cookie de sessão, interpreta o envelope JSON e converte falhas em
+ * erros que páginas e componentes conseguem mostrar à pessoa usuária.
+ * Autenticação, validação e autorização continuam sob responsabilidade da API.
+ */
 
 import type {
   ApiResult,
   AcademicHistorySaveResult,
   ChatResponse,
+  InitialStudentCredentials,
   StatisticsData,
   StatisticsFilters,
   Student,
   StudentDetailData,
+  StudentCreateData,
   StudentFilters,
   StudentImportResult,
   StudentListData,
@@ -19,6 +30,37 @@ import type {
   UserCreatePayload,
   UserUpdatePayload,
 } from '../types'
+import type {
+  AcademicAssessmentApi,
+  AcademicAttendanceApi,
+  AcademicCalendarApi,
+  AcademicCalendarEventApi,
+  AcademicDiaryApi,
+  AcademicDiaryEnrollmentApi,
+  AcademicDocumentApi,
+  AcademicLifeOverviewApi,
+  AcademicProfessorApi,
+  AcademicGradeApi,
+  AcademicLessonApi,
+  CreateAcademicCalendarEventPayload,
+  CreateAcademicCalendarPayload,
+  CreateAcademicAssessmentPayload,
+  CreateAcademicDocumentPayload,
+  CreateAcademicDiaryPayload,
+  CreateAcademicLessonPayload,
+  CreateAcademicRequestPayload,
+  EnrollAcademicStudentsPayload,
+  SetAcademicAttendancePayload,
+  SetAcademicGradePayload,
+  UpdateAcademicAssessmentPayload,
+  UpdateAcademicCalendarEventPayload,
+  UpdateAcademicCalendarPayload,
+  UpdateAcademicDocumentPayload,
+  UpdateAcademicDiaryPayload,
+  UpdateAcademicLessonPayload,
+  UpdateAcademicRequestPayload,
+  AcademicRequestApi,
+} from '../features/academics/academicApiTypes'
 
 interface ApiEnvelope<T> {
   success: boolean
@@ -103,6 +145,42 @@ export function isUnauthorized(error: unknown): boolean {
 }
 
 export const api = {
+  getResearchSummary(): Promise<ApiResult<{
+    profileCount: number
+    statusCounts: Array<{ label: string; value: number }>
+    cohorts: Array<{ year: number; total: number; desvinculados: number }>
+    consentedSurveys: number
+    interviews: Array<{ label: string; value: number }>
+    models: Array<{ id: number; model_name: string; version: string; status: string; variables: unknown[]; metrics: Record<string, unknown>; criado_em: string }>
+    activity: Array<{ id: number; operation: string; description: string; record_count: number; actor: string; criado_em: string }>
+  }>> {
+    return request('/api/pesquisa/resumo')
+  },
+
+  getResearchReportData(): Promise<ApiResult<{
+    profileCount: number
+    statusCounts: Array<{ label: string; value: number }>
+    cohorts: Array<{ year: number; total: number; desvinculados: number }>
+    consentedSurveys: number
+    interviews: Array<{ label: string; value: number }>
+    models: Array<{ id: number; model_name: string; version: string; status: string; variables: unknown[]; metrics: Record<string, unknown>; criado_em: string }>
+    activity: Array<{ id: number; operation: string; description: string; record_count: number; actor: string; criado_em: string }>
+  }>> {
+    return request('/api/pesquisa/relatorio', { method: 'POST', body: {} })
+  },
+
+  importResearchProfiles(records: unknown[]): Promise<ApiResult<{ imported: number }>> {
+    return request('/api/pesquisa/perfis/importar', { method: 'POST', body: { records } })
+  },
+
+  createResearchModel(payload: { nome: string; versao: string; variaveis: unknown[]; metricas: Record<string, unknown>; status: string }): Promise<ApiResult<{ id: number }>> {
+    return request('/api/pesquisa/modelos', { method: 'POST', body: payload })
+  },
+
+  exportResearchData(): Promise<ApiResult<Record<string, unknown>>> {
+    return request('/api/pesquisa/exportacao')
+  },
+
   async login(username: string, password: string): Promise<ApiResult<User>> {
     const result = await request<User | { user: User; capabilities?: User['capabilities'] }>('/api/auth/login', {
       method: 'POST',
@@ -120,8 +198,12 @@ export const api = {
     return request<null>('/api/auth/logout', { method: 'POST' })
   },
 
-  changePassword(payload: { currentPassword: string; newPassword: string; confirmPassword: string }): Promise<ApiResult<null>> {
-    return request<null>('/api/auth/password', { method: 'POST', body: payload })
+  async changePassword(payload: { currentPassword: string; newPassword: string; confirmPassword: string }): Promise<ApiResult<User>> {
+    const result = await request<User | { user: User; capabilities?: User['capabilities'] }>('/api/auth/password', {
+      method: 'POST',
+      body: payload,
+    })
+    return { ...result, data: userFrom(result.data) }
   },
 
   async uploadProfilePhoto(file: File): Promise<ApiResult<User>> {
@@ -164,6 +246,123 @@ export const api = {
     return request<StatisticsData>(`/api/estatisticas${queryString(filters)}`)
   },
 
+  getAcademicLife(periodo = 0): Promise<ApiResult<AcademicLifeOverviewApi>> {
+    return request<AcademicLifeOverviewApi>(`/api/vida-academica${queryString({ periodo })}`)
+  },
+
+  getAcademicAssignableProfessors(): Promise<ApiResult<AcademicProfessorApi[]>> {
+    return request<AcademicProfessorApi[]>('/api/vida-academica/professores')
+  },
+
+  createAcademicCalendar(payload: CreateAcademicCalendarPayload): Promise<ApiResult<AcademicCalendarApi>> {
+    return request<AcademicCalendarApi>('/api/vida-academica/calendarios', { method: 'POST', body: payload })
+  },
+
+  updateAcademicCalendar(calendarId: number, payload: UpdateAcademicCalendarPayload): Promise<ApiResult<AcademicCalendarApi>> {
+    return request<AcademicCalendarApi>(`/api/vida-academica/calendarios/${calendarId}`, { method: 'PATCH', body: payload })
+  },
+
+  deleteAcademicCalendar(calendarId: number): Promise<ApiResult<null>> {
+    return request<null>(`/api/vida-academica/calendarios/${calendarId}`, { method: 'DELETE' })
+  },
+
+  createAcademicCalendarEvent(
+    calendarId: number,
+    payload: CreateAcademicCalendarEventPayload,
+  ): Promise<ApiResult<AcademicCalendarEventApi>> {
+    return request<AcademicCalendarEventApi>(`/api/vida-academica/calendarios/${calendarId}/eventos`, { method: 'POST', body: payload })
+  },
+
+  updateAcademicCalendarEvent(eventId: number, payload: UpdateAcademicCalendarEventPayload): Promise<ApiResult<AcademicCalendarEventApi>> {
+    return request<AcademicCalendarEventApi>(`/api/vida-academica/eventos/${eventId}`, { method: 'PATCH', body: payload })
+  },
+
+  deleteAcademicCalendarEvent(eventId: number): Promise<ApiResult<null>> {
+    return request<null>(`/api/vida-academica/eventos/${eventId}`, { method: 'DELETE' })
+  },
+
+  createAcademicDiary(payload: CreateAcademicDiaryPayload): Promise<ApiResult<AcademicDiaryApi>> {
+    return request<AcademicDiaryApi>('/api/vida-academica/diarios', { method: 'POST', body: payload })
+  },
+
+  updateAcademicDiary(diaryId: number, payload: UpdateAcademicDiaryPayload): Promise<ApiResult<AcademicDiaryApi>> {
+    return request<AcademicDiaryApi>(`/api/vida-academica/diarios/${diaryId}`, { method: 'PATCH', body: payload })
+  },
+
+  enrollAcademicStudents(diaryId: number, payload: EnrollAcademicStudentsPayload): Promise<ApiResult<AcademicDiaryEnrollmentApi[]>> {
+    return request<AcademicDiaryEnrollmentApi[]>(`/api/vida-academica/diarios/${diaryId}/matriculas`, { method: 'POST', body: payload })
+  },
+
+  createAcademicLesson(diaryId: number, payload: CreateAcademicLessonPayload): Promise<ApiResult<AcademicLessonApi>> {
+    return request<AcademicLessonApi>(`/api/vida-academica/diarios/${diaryId}/aulas`, { method: 'POST', body: payload })
+  },
+
+  updateAcademicLesson(lessonId: number, payload: UpdateAcademicLessonPayload): Promise<ApiResult<AcademicLessonApi>> {
+    return request<AcademicLessonApi>(`/api/vida-academica/aulas/${lessonId}`, { method: 'PATCH', body: payload })
+  },
+
+  deleteAcademicLesson(lessonId: number): Promise<ApiResult<null>> {
+    return request<null>(`/api/vida-academica/aulas/${lessonId}`, { method: 'DELETE' })
+  },
+
+  setAcademicAttendance(
+    lessonId: number,
+    matricula: string,
+    payload: SetAcademicAttendancePayload,
+  ): Promise<ApiResult<AcademicAttendanceApi>> {
+    return request<AcademicAttendanceApi>(
+      `/api/vida-academica/aulas/${lessonId}/frequencias/${encodeURIComponent(matricula)}`,
+      { method: 'PUT', body: payload },
+    )
+  },
+
+  setAcademicGrade(
+    assessmentId: number,
+    matricula: string,
+    payload: SetAcademicGradePayload,
+  ): Promise<ApiResult<AcademicGradeApi>> {
+    return request<AcademicGradeApi>(
+      `/api/vida-academica/avaliacoes/${assessmentId}/notas/${encodeURIComponent(matricula)}`,
+      { method: 'PUT', body: payload },
+    )
+  },
+
+  createAcademicAssessment(diaryId: number, payload: CreateAcademicAssessmentPayload): Promise<ApiResult<AcademicAssessmentApi>> {
+    return request<AcademicAssessmentApi>(`/api/vida-academica/diarios/${diaryId}/avaliacoes`, { method: 'POST', body: payload })
+  },
+
+  updateAcademicAssessment(assessmentId: number, payload: UpdateAcademicAssessmentPayload): Promise<ApiResult<AcademicAssessmentApi>> {
+    return request<AcademicAssessmentApi>(`/api/vida-academica/avaliacoes/${assessmentId}`, { method: 'PATCH', body: payload })
+  },
+
+  deleteAcademicAssessment(assessmentId: number): Promise<ApiResult<null>> {
+    return request<null>(`/api/vida-academica/avaliacoes/${assessmentId}`, { method: 'DELETE' })
+  },
+
+  createAcademicRequest(payload: CreateAcademicRequestPayload): Promise<ApiResult<AcademicRequestApi>> {
+    return request<AcademicRequestApi>('/api/vida-academica/requerimentos', { method: 'POST', body: payload })
+  },
+
+  updateAcademicRequest(requestId: number, payload: UpdateAcademicRequestPayload): Promise<ApiResult<AcademicRequestApi>> {
+    return request<AcademicRequestApi>(`/api/vida-academica/requerimentos/${requestId}`, { method: 'PATCH', body: payload })
+  },
+
+  deleteAcademicRequest(requestId: number): Promise<ApiResult<null>> {
+    return request<null>(`/api/vida-academica/requerimentos/${requestId}`, { method: 'DELETE' })
+  },
+
+  createAcademicDocument(payload: CreateAcademicDocumentPayload): Promise<ApiResult<AcademicDocumentApi>> {
+    return request<AcademicDocumentApi>('/api/vida-academica/documentos', { method: 'POST', body: payload })
+  },
+
+  updateAcademicDocument(documentId: number, payload: UpdateAcademicDocumentPayload): Promise<ApiResult<AcademicDocumentApi>> {
+    return request<AcademicDocumentApi>(`/api/vida-academica/documentos/${documentId}`, { method: 'PATCH', body: payload })
+  },
+
+  archiveAcademicDocument(documentId: number): Promise<ApiResult<null>> {
+    return request<null>(`/api/vida-academica/documentos/${documentId}`, { method: 'DELETE' })
+  },
+
   saveAcademicHistory(periodIndex: number, overwrite = false): Promise<ApiResult<AcademicHistorySaveResult>> {
     return request<AcademicHistorySaveResult>(`/api/periodos/${periodIndex}/historico`, {
       method: 'POST',
@@ -171,8 +370,8 @@ export const api = {
     })
   },
 
-  createStudent(payload: StudentPayload): Promise<ApiResult<Student | { aluno: Student }>> {
-    return request<Student | { aluno: Student }>('/api/alunos', { method: 'POST', body: payload })
+  createStudent(payload: StudentPayload): Promise<ApiResult<StudentCreateData>> {
+    return request<StudentCreateData>('/api/alunos', { method: 'POST', body: payload })
   },
 
   async downloadStudentTemplate(): Promise<void> {
@@ -225,6 +424,13 @@ export const api = {
     return request<null>(`/api/alunos/${encodeURIComponent(matricula)}`, { method: 'DELETE' })
   },
 
+  resetStudentCredentials(matricula: string): Promise<ApiResult<{ credenciaisIniciais: InitialStudentCredentials }>> {
+    return request<{ credenciaisIniciais: InitialStudentCredentials }>(
+      `/api/alunos/${encodeURIComponent(matricula)}/credenciais/redefinir`,
+      { method: 'POST' },
+    )
+  },
+
   moveStudent(matricula: string, payload: StudentMovePayload): Promise<ApiResult<Student | { aluno: Student }>> {
     return request<Student | { aluno: Student }>(`/api/alunos/${encodeURIComponent(matricula)}/movimentacao`, {
       method: 'PATCH',
@@ -266,7 +472,11 @@ export const api = {
     return request<null>('/api/backup', { method: 'POST' })
   },
 
-  chat(message: string, options: Pick<RequestOptions, 'signal'> = {}): Promise<ApiResult<ChatResponse>> {
-    return request<ChatResponse>('/api/chat', { ...options, method: 'POST', body: { message } })
+  chat(message: string, contextMessage?: string, options: Pick<RequestOptions, 'signal'> = {}): Promise<ApiResult<ChatResponse>> {
+    return request<ChatResponse>('/api/chat', {
+      ...options,
+      method: 'POST',
+      body: { message, ...(contextMessage ? { contextMessage } : {}) },
+    })
   },
 }

@@ -1,9 +1,14 @@
 /**
- * Runtime boundary for the SGAC chat endpoint.
+ * Papel de `chatDto`: implementa regras de negócio do domínio e conversa com os serviços compartilhados e o banco sem depender da interface.
+ * Este arquivo recebe ou produz dados para os módulos indicados pelos imports e exports abaixo.
+ */
+/**
+ * Valida os dados que entram na rota de chat do SGAC.
  *
- * The browser may submit only a human message. Identity, role, matrícula and
- * every permission value deliberately come from the server session instead of
- * this DTO, so a caller cannot widen its own access with request fields.
+ * O navegador pode enviar uma mensagem e a pergunta anterior para resolver
+ * uma continuação local. Identidade, perfil, matrícula e permissões
+ * vêm da sessão do servidor, e não
+ * deste DTO; assim, a requisição não pode ampliar o próprio acesso.
  */
 'use strict';
 
@@ -25,9 +30,9 @@ function isPlainObject(value) {
 }
 
 /**
- * Validates the complete request body rather than merely reading `message`.
- * Rejecting unknown fields is intentional: fields such as role, user and
- * matrícula must never be accepted from a chat client.
+ * Valida todo o corpo da requisição em vez de ler somente `message`.
+ * Campos desconhecidos são rejeitados de propósito. Perfil, usuário e matrícula
+ * nunca devem ser aceitos como dados enviados pelo chat.
  */
 function validateChatDto(body) {
   if (!isPlainObject(body)) {
@@ -35,16 +40,16 @@ function validateChatDto(body) {
   }
 
   const keys = Object.keys(body);
-  if (keys.length !== 1 || keys[0] !== 'message') {
-    throw new ChatDtoValidationError('Envie apenas o campo "message" para o chat.');
+  if (keys.some((key) => !['message', 'contextMessage'].includes(key)) || !keys.includes('message')) {
+    throw new ChatDtoValidationError('Envie apenas "message" e, opcionalmente, "contextMessage" para o chat.');
   }
 
   if (typeof body.message !== 'string') {
     throw new ChatDtoValidationError('A mensagem deve ser um texto.');
   }
 
-  // Array.from counts Unicode code points, avoiding a surprising double count
-  // for emoji or accented characters represented by surrogate pairs.
+  // `Array.from` conta caracteres Unicode completos e evita contar duas vezes
+  // emojis ou caracteres acentuados representados por pares substitutos.
   if (Array.from(body.message).length > MAX_CHAT_MESSAGE_LENGTH) {
     throw new ChatDtoValidationError(`A mensagem deve ter no máximo ${MAX_CHAT_MESSAGE_LENGTH} caracteres.`);
   }
@@ -54,7 +59,15 @@ function validateChatDto(body) {
     throw new ChatDtoValidationError('Digite uma mensagem para continuar.');
   }
 
-  return Object.freeze({ message });
+  let contextMessage;
+  if (body.contextMessage !== undefined) {
+    if (typeof body.contextMessage !== 'string' || Array.from(body.contextMessage).length > MAX_CHAT_MESSAGE_LENGTH) {
+      throw new ChatDtoValidationError(`O contexto da conversa deve ter no máximo ${MAX_CHAT_MESSAGE_LENGTH} caracteres.`);
+    }
+    contextMessage = body.contextMessage.trim();
+  }
+
+  return Object.freeze({ message, ...(contextMessage ? { contextMessage } : {}) });
 }
 
 module.exports = {

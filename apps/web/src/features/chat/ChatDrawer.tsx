@@ -1,3 +1,7 @@
+/** Papel de `ChatDrawer`: agrupa uma funcionalidade do produto e integra sua apresentação com os tipos e serviços que a alimentam.
+ * Ele se conecta aos serviços e componentes importados e entrega sua saída a quem o consome.
+ */
+
 import {
   useCallback,
   useEffect,
@@ -9,10 +13,11 @@ import {
   type KeyboardEvent as ReactKeyboardEvent,
   type MouseEvent as ReactMouseEvent,
 } from 'react'
+import type { ChatResponseMode } from '../../types'
 import styles from './ChatDrawer.module.css'
 
 /**
- * Deliberately small user contract so the chat feature can stay independent
+ * Contrato de usuário reduzido para manter o chat independente
  * from the application's session and API modules.
  */
 export interface ChatUser {
@@ -28,14 +33,14 @@ export interface ChatUser {
 export interface ChatSendResponse {
   message: string
   sources?: string[]
-  mode?: string
+  mode?: ChatResponseMode
 }
 
 export interface ChatDrawerProps {
   open: boolean
   onClose: () => void
   user: ChatUser
-  onSend: (text: string) => Promise<ChatSendResponse>
+  onSend: (text: string, contextMessage?: string) => Promise<ChatSendResponse>
   disabled?: boolean
 }
 
@@ -48,7 +53,7 @@ interface ChatMessage {
   content: string
   deliveryState: MessageDeliveryState
   sources?: string[]
-  mode?: string
+  mode?: ChatResponseMode
 }
 
 function suggestionsForRole(role: string): string[] {
@@ -56,7 +61,7 @@ function suggestionsForRole(role: string): string[] {
     return ['Meus dados', 'Meu desempenho', 'Ativar acessibilidade', 'Ajuda']
   }
 
-  if (['Admin', 'Diretor', 'Professor'].includes(role)) {
+  if (['Admin', 'Diretor', 'Coordenador', 'Professor'].includes(role)) {
     return ['Resumo', 'Alunos em risco', 'Ativar acessibilidade', 'Ajuda']
   }
 
@@ -101,7 +106,7 @@ function formatScope(user: ChatUser): string {
   return details.length ? details.join(' · ') : 'perfil autenticado'
 }
 
-function formatMode(mode?: string): string | undefined {
+function formatMode(mode?: ChatResponseMode): string | undefined {
   if (mode === 'local-model') return 'Resposta redigida localmente'
   if (mode === 'contextual') return 'Resposta baseada no contexto local'
   return mode
@@ -226,6 +231,7 @@ export function ChatDrawer({ open, onClose, user, onSend, disabled = false }: Ch
     if (!text || inputIsDisabled) return
 
     const requestScopeKey = scopeKey
+    const previousQuestion = [...messages].reverse().find((item) => item.author === 'user' && item.deliveryState === 'sent')?.content
     const messageId = nextMessageId('user')
     setDraft('')
     setError(null)
@@ -236,7 +242,7 @@ export function ChatDrawer({ open, onClose, user, onSend, disabled = false }: Ch
     ])
 
     try {
-      const response = await onSend(text)
+      const response = await onSend(text, previousQuestion)
       if (currentScopeKeyRef.current !== requestScopeKey) return
 
       setMessages((current): ChatMessage[] => [
@@ -247,7 +253,7 @@ export function ChatDrawer({ open, onClose, user, onSend, disabled = false }: Ch
           content: response.message.trim() || 'Não encontrei uma resposta para essa pergunta.',
           deliveryState: 'sent',
           sources: normalizeSources(response.sources),
-          mode: response.mode?.trim() || undefined,
+          mode: response.mode,
         },
       ])
     } catch (requestError) {
@@ -267,7 +273,7 @@ export function ChatDrawer({ open, onClose, user, onSend, disabled = false }: Ch
     } finally {
       if (currentScopeKeyRef.current === requestScopeKey) setIsSending(false)
     }
-  }, [draft, inputIsDisabled, onSend, scopeKey])
+  }, [draft, inputIsDisabled, messages, onSend, scopeKey])
 
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()

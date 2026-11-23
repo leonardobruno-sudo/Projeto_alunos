@@ -1,8 +1,12 @@
 /**
- * Runtime DTO validation for the public student-search endpoint.
+ * Papel de `student.dto`: implementa regras de negócio do domínio e conversa com os serviços compartilhados e o banco sem depender da interface.
+ * Este arquivo recebe ou produz dados para os módulos indicados pelos imports e exports abaixo.
+ */
+/**
+ * Valida em tempo de execução os dados recebidos na busca de alunos.
  *
- * TypeScript contracts in the web app are useful for development, but this
- * module is the trusted boundary: query strings are untyped at runtime.
+ * Os tipos TypeScript da interface ajudam durante o desenvolvimento, mas este
+ * módulo é a barreira de validação, pois parâmetros chegam sem tipo definido.
  */
 const { periods } = require('../../lib/constants');
 

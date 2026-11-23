@@ -1,6 +1,10 @@
 /**
- * Unit checks for the isolated assistant command boundary. The tests use
- * injected in-memory readers, so no real academic record is read or changed.
+ * Papel de `ai-command-controller.test`: garante que um comportamento importante continue funcionando nos cenários descritos a seguir.
+ * Este arquivo recebe ou produz dados para os módulos indicados pelos imports e exports abaixo.
+ */
+/**
+ * Testa isoladamente a fronteira de comandos da assistente. Os casos usam
+ * leitores em memória, sem consultar nem alterar dados acadêmicos reais.
  */
 'use strict';
 
@@ -10,7 +14,8 @@ const test = require('node:test');
 const { createChatController } = require('../src/modules/ai/chatController');
 const { validateChatDto } = require('../src/modules/ai/chatDto');
 const { ChatCommandController } = require('../src/modules/ai/commandController');
-const { AiChatService, getLocalAiEndpoint } = require('../src/modules/ai/aiService');
+const { AiChatService, buildAiInstructions, getLocalAiEndpoint, sanitizeGeneratedMessage } = require('../src/modules/ai/aiService');
+const { searchKnowledgeBase } = require('../src/modules/ai/knowledgeBase');
 
 function responseRecorder() {
   return {
@@ -29,10 +34,52 @@ function responseRecorder() {
 
 test('o DTO do chat recusa campos que poderiam ampliar permissões', () => {
   assert.deepEqual(validateChatDto({ message: 'Resumo' }), { message: 'Resumo' });
+  assert.deepEqual(validateChatDto({ message: 'Explique melhor', contextMessage: 'Como usar o teclado?' }), {
+    message: 'Explique melhor', contextMessage: 'Como usar o teclado?'
+  });
   assert.throws(
     () => validateChatDto({ message: 'Resumo', role: 'Admin' }),
-    /apenas o campo "message"/i
+    /apenas "message".*contextMessage/i
   );
+});
+
+test('uma pergunta de continuação revalida a pergunta anterior na base local', async () => {
+  const controller = new ChatCommandController({
+    databaseApi: {
+      async fetchVisibleStudents() { assert.fail('continuação de ajuda não consulta alunos'); },
+      async getVisibleStudentByMatricula() { assert.fail('continuação de ajuda não consulta matrículas'); }
+    },
+    permissionApi: { canAccessStudent: () => false }
+  });
+
+  const result = await controller.execute(
+    { id: 1, role: 'Aluno' },
+    'Pode explicar melhor?',
+    { contextMessage: 'Como posso usar o sistema sem mouse e com o teclado?' }
+  );
+
+  assert.equal(result.intent, 'follow_up');
+  assert.equal(result.useAi, true);
+  assert.match(result.fallbackMessage, /Tab e Shift\+Tab/);
+  assert.equal(result.context.tipo, 'continuidade_orientacao_local');
+});
+
+test('uma continuação não usa contexto acadêmico reenviado pelo cliente', async () => {
+  const controller = new ChatCommandController({
+    databaseApi: {
+      async fetchVisibleStudents() { assert.fail('contexto reenviado não deve consultar dados'); },
+      async getVisibleStudentByMatricula() { assert.fail('contexto reenviado não deve consultar matrículas'); }
+    },
+    permissionApi: { canAccessStudent: () => false }
+  });
+  const result = await controller.execute(
+    { id: 2, role: 'Aluno', matricula: 'A1' },
+    'Explique melhor',
+    { contextMessage: 'Buscar matrícula: B999' }
+  );
+  assert.equal(result.intent, 'unsupported');
+  assert.equal(result.useAi, false);
+  assert.match(result.fallbackMessage, /contexto suficiente/);
 });
 
 test('uma busca do chat mantém escopo do servidor e remove campos sensíveis', async () => {
@@ -114,8 +161,8 @@ test('o chat do aluno usa dados atuais mesmo quando existe boletim histórico', 
         assert.equal(periodIndex, 0);
         readerOptions = options;
 
-        // This reader deliberately models a closed snapshot with a stale
-        // grade. The command must select the live value instead.
+        // Este leitor simula intencionalmente um período encerrado com uma nota antiga
+        // para confirmar que o comando escolhe o valor atual.
         return options?.source === 'atual'
           ? {
             matricula,
@@ -225,6 +272,26 @@ test('a assistente orienta onde ativar as preferencias de acessibilidade do SGAC
   assert.match(result.fallbackMessage, /alto contraste/);
 });
 
+test('a base local oferece passos concretos para boletim, frequência, senha e alertas', () => {
+  const bulletin = searchKnowledgeBase('Como consulto meu boletim?');
+  const attendance = searchKnowledgeBase('Como lançar frequência no diário?');
+  const password = searchKnowledgeBase('Como trocar senha?');
+  const risk = searchKnowledgeBase('O que significa estar em risco?');
+  assert.ok(bulletin.some((article) => /Consultar o boletim/.test(article.answer)));
+  assert.ok(attendance.some((article) => /Vida acadêmica/.test(article.answer)));
+  assert.ok(password.some((article) => /Configurações/.test(article.answer)));
+  assert.ok(risk.some((article) => /não é um modelo preditivo de evasão/.test(article.answer)));
+});
+
+test('prompt orienta respostas estruturadas e filtro permite instruções seguras sobre senha', () => {
+  assert.match(buildAiInstructions(), /passos numerados/);
+  assert.match(buildAiInstructions(), /português brasileiro/);
+  assert.equal(sanitizeGeneratedMessage('Para trocar a senha, abra Configurações e siga os passos.'), 'Para trocar a senha, abra Configurações e siga os passos.');
+  assert.equal(sanitizeGeneratedMessage('Sua senha: ABC123'), null);
+  assert.equal(sanitizeGeneratedMessage('CPF 123.456.789-00'), null);
+  assert.equal(sanitizeGeneratedMessage('Telefone: (11) 91234-5678'), null);
+});
+
 test('a geracao opcional usa apenas um modelo local e recebe o contexto autorizado', async () => {
   let requestBody = null;
   const service = new AiChatService({
@@ -285,9 +352,11 @@ test('pergunta sem correspondencia nao consulta dados nem inventa uma resposta',
 });
 
 test('a rota do chat mantém o envelope padrão da API', async () => {
+  let receivedContext = null;
   const handler = createChatController({
     chatService: {
-      async respond() {
+      async respond(input) {
+        receivedContext = input.contextMessage;
         return {
           message: 'Resumo autorizado.',
           mode: 'contextual',
@@ -301,12 +370,13 @@ test('a rota do chat mantém o envelope padrão da API', async () => {
   const res = responseRecorder();
 
   await handler(
-    { body: { message: 'Resumo' }, session: { user: { id: 3, role: 'Aluno' } } },
+    { body: { message: 'Resumo', contextMessage: 'Ativar acessibilidade' }, session: { user: { id: 3, role: 'Aluno' } } },
     res
   );
 
   assert.equal(res.code, 200);
   assert.equal(res.body.success, true);
   assert.equal(res.body.data.message, 'Resumo autorizado.');
+  assert.equal(receivedContext, 'Ativar acessibilidade');
   assert.deepEqual(res.body.data.scope, { role: 'Aluno', access: 'proprio' });
 });

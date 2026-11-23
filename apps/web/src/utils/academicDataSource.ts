@@ -1,4 +1,8 @@
-/** Normalizes source metadata returned by current and historical academic endpoints. */
+/** Papel de `academicDataSource`: transforma, valida ou transporta dados entre a interface e os formatos usados pela API ou por arquivos exportados.
+ * Ele se conecta aos serviços e componentes importados e entrega sua saída a quem o consome.
+ */
+
+/** Padroniza a origem informada pelas rotas acadêmicas atuais e históricas. */
 
 import type { AcademicDataSource, StudentDetailData, StudentFilters, StudentListData, SubjectData } from '../types'
 

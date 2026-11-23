@@ -1,7 +1,11 @@
 /**
+ * Papel de `permissions`: oferece recursos compartilhados ao servidor, como sessão, permissões, respostas e acesso ao banco.
+ * Este arquivo recebe ou produz dados para os módulos indicados pelos imports e exports abaixo.
+ */
+/**
  * src/lib/permissions.js
  *
- * Role-based authorization helpers for student visibility and edits.
+ * Regras de autorização que limitam a consulta e a edição de alunos por perfil.
  *
  * Used by:
  *   - src/lib/database.js
@@ -24,7 +28,7 @@ function subjectEntriesForAccess(student) {
       const parsed = JSON.parse(student.materias_json);
       if (Array.isArray(parsed)) return parsed;
     } catch (_error) {
-      // Legacy records fall back to their single discipline below.
+      // Para registros antigos, usamos abaixo a única disciplina disponível.
     }
   }
 
@@ -46,7 +50,7 @@ function canAccessStudent(user, student) {
   if (user.role === 'Aluno') {
     return normalizeMatricula(student.matricula) === normalizeMatricula(user.matricula);
   }
-  if (user.role === 'Diretor') {
+  if (user.role === 'Diretor' || user.role === 'Coordenador') {
     return hasSameScope(student.curso, user.curso);
   }
   if (user.role === 'Professor') {
@@ -60,7 +64,7 @@ function canAccessStudent(user, student) {
 function canEditStudent(user, student) {
   if (!user || !student) return false;
   if (user.role === 'Admin') return true;
-  if (user.role === 'Diretor') {
+  if (user.role === 'Diretor' || user.role === 'Coordenador') {
     return hasSameScope(student.curso, user.curso);
   }
   if (user.role === 'Professor') {
