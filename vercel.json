@@ -1,5 +1,5 @@
 {
-  "installCommand": "npm ci && npm --prefix apps/web ci",
+  "installCommand": "npm_config_build_from_source=true npm ci && npm --prefix apps/web ci",
   "buildCommand": "npm run build",
   "outputDirectory": "apps/web/dist",
   "framework": null,
