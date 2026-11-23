@@ -1,14 +1,38 @@
-/** Page for manual registration, student movement, and CSV bulk import. */
+/** Papel de `RegistrationPage`: apresenta uma área do sistema e coordena seus componentes, estado local e chamadas à API conforme as permissões da pessoa usuária.
+ * Ele se conecta aos serviços e componentes importados e entrega sua saída a quem o consome.
+ */
+
+/** Página de cadastro manual, movimentação de alunos e importação em lote por CSV. */
 
 import { useRef, useState, type ChangeEvent, type FormEvent } from 'react'
 import { StudentForm } from '../components/StudentForm'
-import type { StudentImportResult, StudentMovePayload, StudentPayload, User } from '../types'
+import type { InitialStudentCredentials, StudentImportResult, StudentMovePayload, StudentPayload, User } from '../types'
 import { api } from '../utils/api'
 
 interface RegistrationPageProps {
   user: User
   onMessage: (message: string) => void
   onError: (error: unknown) => string
+}
+
+function InitialCredentialsCard({ credentials, onDismiss, title }: {
+  credentials: InitialStudentCredentials
+  onDismiss?: () => void
+  title: string
+}) {
+  return (
+    <section aria-live="assertive" className="alert alert-warning initial-credentials-card" role="alert">
+      <div>
+        <h3>{title}</h3>
+        <p>Anote e entregue estes dados ao aluno por um canal seguro. A senha temporária será mostrada somente agora e deverá ser trocada no primeiro acesso.</p>
+        <dl className="initial-credentials-values">
+          <div><dt>Usuário</dt><dd><code>{credentials.usuario}</code></dd></div>
+          <div><dt>Senha temporária</dt><dd><code>{credentials.senhaTemporaria}</code></dd></div>
+        </dl>
+      </div>
+      {onDismiss && <button className="button button-secondary" onClick={onDismiss} type="button">Já anotei</button>}
+    </section>
+  )
 }
 
 export function RegistrationPage({ user, onMessage, onError }: RegistrationPageProps) {
@@ -24,10 +48,13 @@ export function RegistrationPage({ user, onMessage, onError }: RegistrationPageP
   const [importResult, setImportResult] = useState<StudentImportResult | null>(null)
   const [importing, setImporting] = useState(false)
   const [downloadingTemplate, setDownloadingTemplate] = useState(false)
+  const [initialCredentials, setInitialCredentials] = useState<InitialStudentCredentials | null>(null)
   const isAdmin = user.role === 'Admin'
 
   async function createStudent(payload: StudentPayload): Promise<string> {
+    setInitialCredentials(null)
     const result = await api.createStudent(payload)
+    setInitialCredentials(result.data.credenciaisIniciais ?? null)
     const message = result.message || 'Aluno cadastrado com sucesso.'
     onMessage(message)
     return message
@@ -181,6 +208,19 @@ export function RegistrationPage({ user, onMessage, onError }: RegistrationPageP
                   </ul>
                 </div>
               )}
+              {importResult.imported.some((item) => item.credenciaisIniciais) && (
+                <section className="initial-credentials-batch" aria-label="Credenciais temporárias emitidas">
+                  <h4>Credenciais temporárias emitidas</h4>
+                  <p>Registre-as agora. Elas não podem ser consultadas novamente após sair desta tela.</p>
+                  {importResult.imported.map((item) => item.credenciaisIniciais && (
+                    <InitialCredentialsCard
+                      credentials={item.credenciaisIniciais}
+                      key={`${item.line}-${item.matricula ?? item.credenciaisIniciais.usuario}`}
+                      title={`Aluno da linha ${item.line}${item.matricula ? ` · ${item.matricula}` : ''}`}
+                    />
+                  ))}
+                </section>
+              )}
             </div>
           )}
         </section>
@@ -191,9 +231,16 @@ export function RegistrationPage({ user, onMessage, onError }: RegistrationPageP
           <div className="section-heading">
             <div>
               <h2>Novo aluno</h2>
-              <p className="muted">Os campos obrigatórios são matrícula, nome e turma. O usuário é a matrícula e a senha inicial segue o padrão IFRR.matrícula@primeiroNome; peça ao aluno para alterá-la após entrar.</p>
+              <p className="muted">Os campos obrigatórios são matrícula, nome e turma. O usuário será a matrícula e o sistema criará uma senha temporária exclusiva, exibida uma única vez após o cadastro.</p>
             </div>
           </div>
+          {initialCredentials && (
+            <InitialCredentialsCard
+              credentials={initialCredentials}
+              onDismiss={() => setInitialCredentials(null)}
+              title="Credenciais iniciais do aluno"
+            />
+          )}
           <StudentForm
             mode="create"
             onLoadTurmaSubjects={loadTurmaSubjects}

@@ -78,9 +78,9 @@ export function getSubjectNames(students: Student[]): string[] {
 }
 
 export function getStudentStatus(student: Student): string {
-  // The API calculates this field from the same aggregate grade and absence
-  // percentage shown in the table. Do not promote a subject-level warning to
-  // the whole student here: the Matérias view receives that subject directly.
+  // A API calcula este campo com a mesma média geral e o percentual de faltas
+  // exibidos na tabela. Não transforme o alerta de uma matéria em alerta geral
+  // do aluno: a tela Matérias recebe cada matéria separadamente.
   const serverStatus = asText(student.situacao_risco).trim().toLocaleLowerCase('pt-BR')
   if (serverStatus.includes('risco')) return 'Em risco'
   if (serverStatus.includes('alerta')) return 'Alerta'

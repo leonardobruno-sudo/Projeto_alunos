@@ -1,3 +1,7 @@
+/** Papel de `DashboardPage`: apresenta uma área do sistema e coordena seus componentes, estado local e chamadas à API conforme as permissões da pessoa usuária.
+ * Ele se conecta aos serviços e componentes importados e entrega sua saída a quem o consome.
+ */
+
 /** Visão geral com busca paginada, escopo aplicado no servidor e edição pontual. */
 
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
@@ -6,7 +10,7 @@ import { StudentEditor } from '../components/StudentEditor'
 import { StudentTable } from '../components/StudentTable'
 import { QUOTA_OPTIONS } from '../constants/quotas'
 import { toStudentListDto, type StudentListDto } from '../features/students/student.dto'
-import { DEFAULT_PERIODS, canManageStudents, type Student, type StudentFilters, type StudentPayload, type User } from '../types'
+import { DEFAULT_PERIODS, canEditCourseStudents, canManageStudents, type Student, type StudentFilters, type StudentPayload, type User } from '../types'
 import { api } from '../utils/api'
 
 interface DashboardPageProps {
@@ -141,6 +145,17 @@ export function DashboardPage({ user, onMessage, onError }: DashboardPageProps) 
       setEditingStudent(null)
       reload()
       return message
+    } catch (requestError) {
+      throw new Error(onError(requestError))
+    }
+  }
+
+  async function resetStudentCredentials() {
+    if (!editingStudent) throw new Error('Nenhum aluno foi selecionado.')
+    try {
+      const result = await api.resetStudentCredentials(editingStudent.matricula)
+      onMessage(result.message || 'Senha temporária redefinida com sucesso.')
+      return result.data.credenciaisIniciais
     } catch (requestError) {
       throw new Error(onError(requestError))
     }
@@ -300,7 +315,7 @@ export function DashboardPage({ user, onMessage, onError }: DashboardPageProps) 
         {openingStudent && <p className="student-editor-loading" role="status">Abrindo o cadastro de {openingStudent}…</p>}
         <StudentTable
           canDelete={!isHistorical && canManageStudents(user)}
-          canEdit={!isHistorical && canManageStudents(user)}
+          canEdit={!isHistorical && canEditCourseStudents(user)}
           loading={loading && list.alunos.length === 0}
           onDelete={deleteStudent}
           onEdit={(student) => void openStudentEditor(student)}
@@ -320,6 +335,7 @@ export function DashboardPage({ user, onMessage, onError }: DashboardPageProps) 
           contextMessage={list.hasPeriodSnapshot ? 'Você está editando dados atuais. O histórico fechado do período permanece somente para consulta.' : undefined}
           onClose={() => setEditingStudent(null)}
           onLoadTurmaSubjects={loadTurmaSubjects}
+          onResetCredentials={['Admin', 'Diretor', 'Coordenador'].includes(user.role) ? resetStudentCredentials : undefined}
           onSave={saveStudent}
           student={editingStudent}
           userRole={user.role}

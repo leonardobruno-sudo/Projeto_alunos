@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
 import { DataSourceNotice, DataSourceSelector } from '../components/DataSourceControls'
 import { StudentEditor } from '../components/StudentEditor'
 import { StudentTable } from '../components/StudentTable'
-import { DEFAULT_PERIODS, canManageStudents, type Student, type StudentFilters, type StudentPayload, type User } from '../types'
+import { DEFAULT_PERIODS, canEditCourseStudents, canManageStudents, type Student, type StudentFilters, type StudentPayload, type User } from '../types'
 import { academicSourceMetadata, type AcademicSourceMetadata } from '../utils/academicDataSource'
 import { api } from '../utils/api'
 import { getPeriodOptions, getStudents } from '../utils/students'
@@ -141,13 +141,25 @@ export function PeriodsPage({ user, onMessage, onError }: PeriodsPageProps) {
     }
   }
 
+  async function resetStudentCredentials() {
+    if (!editingStudent) throw new Error('Nenhum aluno foi selecionado.')
+    try {
+      const result = await api.resetStudentCredentials(editingStudent.matricula)
+      onMessage(result.message || 'Senha temporária redefinida com sucesso.')
+      return result.data.credenciaisIniciais
+    } catch (requestError) {
+      throw new Error(onError(requestError))
+    }
+  }
+
   async function loadTurmaSubjects(turma: string): Promise<string[]> {
     const result = await api.getTurmaSubjects(turma)
     return result.data
   }
 
   const periodName = metadata.currentPeriodName || periods[metadata.periodIndex] || DEFAULT_PERIODS[0]
-  const canChangeStudents = !isHistorical && canManageStudents(user)
+  const isStudent = user.role === 'Aluno'
+  const canChangeStudents = !isHistorical && canEditCourseStudents(user)
 
   return (
     <section className="page-stack">
@@ -155,7 +167,11 @@ export function PeriodsPage({ user, onMessage, onError }: PeriodsPageProps) {
         <div>
           <p className="eyebrow">Análise acadêmica</p>
           <h1>Períodos</h1>
-          <p className="muted">Alterne o período e a fonte para acompanhar a situação acadêmica dos alunos.</p>
+          <p className="muted">
+            {isStudent
+              ? 'Alterne o período e a fonte para acompanhar a sua situação acadêmica.'
+              : 'Alterne o período e a fonte para acompanhar a situação acadêmica dos alunos.'}
+          </p>
         </div>
       </div>
 
@@ -175,28 +191,34 @@ export function PeriodsPage({ user, onMessage, onError }: PeriodsPageProps) {
       </div>
 
       <form className="filter-bar filter-bar-periods" onSubmit={submitFilters}>
-        <label>
-          Matrícula
-          <input
-            onChange={(event) => setFilters((current) => ({ ...current, busca_matricula: event.target.value }))}
-            placeholder="Buscar matrícula"
-            value={filters.busca_matricula ?? ''}
-          />
-        </label>
-        <label>
-          Nome
-          <input
-            onChange={(event) => setFilters((current) => ({ ...current, busca_nome: event.target.value }))}
-            placeholder="Buscar nome"
-            value={filters.busca_nome ?? ''}
-          />
-        </label>
+        {!isStudent && (
+          <>
+            <label>
+              Matrícula
+              <input
+                onChange={(event) => setFilters((current) => ({ ...current, busca_matricula: event.target.value }))}
+                placeholder="Buscar matrícula"
+                value={filters.busca_matricula ?? ''}
+              />
+            </label>
+            <label>
+              Nome
+              <input
+                onChange={(event) => setFilters((current) => ({ ...current, busca_nome: event.target.value }))}
+                placeholder="Buscar nome"
+                value={filters.busca_nome ?? ''}
+              />
+            </label>
+          </>
+        )}
         <DataSourceSelector
           id="periods-data-source"
           onChange={(fonte) => setFilters((current) => ({ ...current, fonte }))}
           value={filters.fonte ?? 'atual'}
         />
-        <button className="button button-primary" type="submit">Aplicar filtros</button>
+        <button className="button button-primary" type="submit">
+          {isStudent ? 'Atualizar consulta' : 'Aplicar filtros'}
+        </button>
       </form>
 
       {!loading && <DataSourceNotice
@@ -210,15 +232,17 @@ export function PeriodsPage({ user, onMessage, onError }: PeriodsPageProps) {
       <section className="card">
         <div className="section-heading">
           <div>
-            <h2>{periodName}</h2>
+            <h2>{isStudent ? `Meu período: ${periodName}` : periodName}</h2>
             <p className="muted">
-              {students.length} aluno(s) visível(is) neste período.
+              {isStudent
+                ? 'Seu registro acadêmico está disponível para o período selecionado.'
+                : `${students.length} aluno(s) visível(is) neste período.`}
               {isHistorical ? ' O histórico fechado não permite edição ou exclusão.' : ''}
             </p>
           </div>
         </div>
         <StudentTable
-          canDelete={canChangeStudents}
+          canDelete={!isHistorical && canManageStudents(user)}
           canEdit={canChangeStudents}
           editLabel="Editar cadastro atual"
           loading={loading}
@@ -234,6 +258,7 @@ export function PeriodsPage({ user, onMessage, onError }: PeriodsPageProps) {
           contextMessage={metadata.hasPeriodSnapshot ? 'Você está editando dados atuais. O histórico fechado do período permanece somente para consulta.' : undefined}
           onClose={() => setEditingStudent(null)}
           onLoadTurmaSubjects={loadTurmaSubjects}
+          onResetCredentials={['Admin', 'Diretor', 'Coordenador'].includes(user.role) ? resetStudentCredentials : undefined}
           onSave={saveStudent}
           student={editingStudent}
           userRole={user.role}

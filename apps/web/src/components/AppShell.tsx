@@ -22,6 +22,8 @@ const navigationItems: Array<{ page: PageKey; label: string; adminOnly?: boolean
   { page: 'estatisticas', label: 'Estatísticas' },
   { page: 'cadastro', label: 'Cadastro', registrationOnly: true },
   { page: 'materias', label: 'Matérias' },
+  { page: 'vida-academica', label: 'Vida acadêmica' },
+  { page: 'pesquisa', label: 'Pesquisa PIPAD', adminOnly: true },
   { page: 'periodos', label: 'Períodos' },
   { page: 'configuracoes', label: 'Configurações' },
   { page: 'permissoes', label: 'Permissões', adminOnly: true },

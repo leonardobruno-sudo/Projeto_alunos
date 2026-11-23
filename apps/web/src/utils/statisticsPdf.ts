@@ -1,4 +1,8 @@
-/** Builds a compact, accessible PDF report from the scoped academic statistics. */
+/** Papel de `statisticsPdf`: transforma, valida ou transporta dados entre a interface e os formatos usados pela API ou por arquivos exportados.
+ * Ele se conecta aos serviços e componentes importados e entrega sua saída a quem o consome.
+ */
+
+/** Gera um PDF compacto e acessível com estatísticas do escopo autorizado. */
 
 import { jsPDF } from 'jspdf'
 import { quotaLabel } from '../constants/quotas'
@@ -9,7 +13,7 @@ const headerHeight = 62
 const footerHeight = 28
 const primaryColor = [54, 75, 132] as const
 const textColor = [31, 41, 55] as const
-const mutedColor = [100, 116, 139] as const
+const mutedColor = [75, 85, 99] as const
 const borderColor = [203, 213, 225] as const
 const alternateRowColor = [248, 250, 252] as const
 const whiteColor = [255, 255, 255] as const

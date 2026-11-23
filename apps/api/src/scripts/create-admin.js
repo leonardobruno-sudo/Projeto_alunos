@@ -1,6 +1,10 @@
 /**
- * One-time CLI utility that creates the first administrator in an empty
- * SQLite database using credentials supplied through environment variables.
+ * Papel de `create-admin`: automatiza uma tarefa administrativa ou de inicialização a partir do servidor e do banco SQLite.
+ * Este arquivo recebe ou produz dados para os módulos indicados pelos imports e exports abaixo.
+ */
+/**
+ * Utilitário de terminal para criar o primeiro administrador em um banco SQLite
+ * vazio, usando credenciais fornecidas por variáveis de ambiente.
  */
 const { db, getSql, runSql, setupDatabase } = require('../lib/database');
 const { hashPassword } = require('../lib/utils');

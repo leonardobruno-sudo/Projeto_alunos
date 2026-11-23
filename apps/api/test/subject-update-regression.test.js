@@ -1,7 +1,11 @@
 /**
- * Regression coverage for the separation between a closed period bulletin
- * and a live enrollment. These tests exercise the protected routes so the
- * validation and teacher-only update paths stay covered together.
+ * Papel de `subject-update-regression.test`: garante que um comportamento importante continue funcionando nos cenários descritos a seguir.
+ * Este arquivo recebe ou produz dados para os módulos indicados pelos imports e exports abaixo.
+ */
+/**
+ * Confere a separação entre o boletim de um período encerrado
+ * e o cadastro atual. Os testes chamam rotas protegidas para verificar
+ * em conjunto a validação e a edição restrita ao professor.
  */
 'use strict';
 
@@ -184,6 +188,20 @@ test('regressões de atualização de matérias e boletim', async (t) => {
     assert.equal(liveSubject.payload.data.hasPeriodSnapshot, true);
     assert.match(liveSubject.payload.data.snapshotAt, /^\d{4}-\d{2}-\d{2}T/);
     assert.equal(liveSubject.payload.data.students[0].total_aulas, 80);
+
+    const historicalStatistics = await requestApi('/api/estatisticas?periodo=0&fonte=historico');
+    assert.equal(historicalStatistics.response.status, 200);
+    assert.equal(historicalStatistics.payload.data.dataSource, 'historico');
+    assert.equal(historicalStatistics.payload.data.totals.averageAttendancePercent, 10);
+
+    const liveStatistics = await requestApi('/api/estatisticas?periodo=0&fonte=atual');
+    assert.equal(liveStatistics.response.status, 200);
+    assert.equal(liveStatistics.payload.data.dataSource, 'atual');
+    assert.equal(liveStatistics.payload.data.totals.averageAttendancePercent, 12.5);
+
+    const invalidSource = await requestApi('/api/estatisticas?periodo=0&fonte=desconhecida');
+    assert.equal(invalidSource.response.status, 400);
+    assert.equal(invalidSource.payload.success, false);
   });
 
   await t.test('catálogo de matérias da turma usa o cadastro atual, não o snapshot fechado', async () => {

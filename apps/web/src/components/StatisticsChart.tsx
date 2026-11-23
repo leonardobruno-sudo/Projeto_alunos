@@ -1,9 +1,17 @@
-/** Renders dependency-free, responsive SVG charts for academic statistics. */
+/** Papel de `StatisticsChart`: apresenta e coleta dados em um componente reutilizável, recebendo estado e ações da página que o utiliza.
+ * Ele se conecta aos serviços e componentes importados e entrega sua saída a quem o consome.
+ */
+
+/**
+ * Desenha gráficos SVG adaptáveis com as estatísticas que a página fornece.
+ * Converte séries e agregados da API em marcas visuais acessíveis, sem buscar
+ * dados por conta própria e sem adicionar uma biblioteca de gráficos.
+ */
 
 import { useId } from 'react'
 
 export type StatisticsChartType = 'pie' | 'columns' | 'line' | 'bars' | 'area'
-type PieLabelMode = 'total' | 'percentages'
+type PieLabelMode = 'none' | 'percentages'
 
 export interface ChartDatum {
   label: string
@@ -83,6 +91,17 @@ function donutSlicePath(
 ): string {
   const outerStart = polarPoint(cx, cy, outerRadius, startAngle)
   const outerEnd = polarPoint(cx, cy, outerRadius, endAngle)
+
+  if (innerRadius === 0) {
+    const largeArc = endAngle - startAngle > 180 ? 1 : 0
+    return [
+      `M ${cx} ${cy}`,
+      `L ${outerStart.x} ${outerStart.y}`,
+      `A ${outerRadius} ${outerRadius} 0 ${largeArc} 1 ${outerEnd.x} ${outerEnd.y}`,
+      'Z',
+    ].join(' ')
+  }
+
   const innerEnd = polarPoint(cx, cy, innerRadius, endAngle)
   const innerStart = polarPoint(cx, cy, innerRadius, startAngle)
   const largeArc = endAngle - startAngle > 180 ? 1 : 0
@@ -112,7 +131,7 @@ function pieEntries(data: ChartDatum[]): { entries: PieEntry[]; slices: PieSlice
 
   const slices = positiveEntries.map((item, index) => {
     const startAngle = angle
-    // Closing the last sector at 360 avoids a floating-point seam.
+    // Fechar o último setor em 360 graus evita uma falha visual de arredondamento.
     const endAngle = index === positiveEntries.length - 1 ? 360 : angle + (item.value / total) * 360
     angle = endAngle
     return { ...item, startAngle, endAngle }
@@ -152,10 +171,10 @@ function PieLegend({ entries, valueLabel }: { entries: PieEntry[]; valueLabel?: 
   )
 }
 
-function PieChart({ data, title, valueLabel, pieLabelMode = 'total' }: Pick<StatisticsChartProps, 'data' | 'title' | 'valueLabel' | 'pieLabelMode'>) {
+function PieChart({ data, title, valueLabel, pieLabelMode = 'none' }: Pick<StatisticsChartProps, 'data' | 'title' | 'valueLabel' | 'pieLabelMode'>) {
   const titleId = useId()
   const descriptionId = useId()
-  const { entries, slices, total } = pieEntries(data)
+  const { entries, slices } = pieEntries(data)
   const summary = entries
     .map((item) => `${item.label}: ${formatChartValue(item.value, valueLabel)} (${formatPercentage(item.percentage)})`)
     .join('. ')
@@ -163,14 +182,19 @@ function PieChart({ data, title, valueLabel, pieLabelMode = 'total' }: Pick<Stat
   const centerX = 140
   const centerY = 140
   const outerRadius = 104
-  const innerRadius = 62
+  const innerRadius = 0
   const showSectorPercentages = pieLabelMode === 'percentages'
-  const description = showSectorPercentages
-    ? summary
-    : `Total ${formatChartValue(total, valueLabel)}. ${summary}.`
+  const description = summary || 'Sem valores registrados.'
 
   return (
     <figure className="statistics-pie-figure">
+      <div className="statistics-pie-summary">
+        <figcaption className="statistics-pie-caption">
+          <strong>{title}</strong>
+          <span>Valores e percentuais por categoria.</span>
+        </figcaption>
+        <PieLegend entries={entries} valueLabel={valueLabel} />
+      </div>
       <svg
         aria-describedby={descriptionId}
         aria-labelledby={titleId}
@@ -218,18 +242,8 @@ function PieChart({ data, title, valueLabel, pieLabelMode = 'total' }: Pick<Stat
                 </text>
               )
             })
-          : (
-            <>
-              <text aria-hidden="true" className="statistics-pie-total" textAnchor="middle" x={centerX} y={centerY - 8}>Total</text>
-              <text aria-hidden="true" className="statistics-pie-value" textAnchor="middle" x={centerX} y={centerY + 21}>{formatChartValue(total, valueLabel)}</text>
-            </>
-          )}
+          : null}
       </svg>
-      <figcaption className="statistics-pie-caption">
-        <strong>{title}</strong>
-        <span>Os valores e percentuais também estão listados abaixo.</span>
-      </figcaption>
-      <PieLegend entries={entries} valueLabel={valueLabel} />
     </figure>
   )
 }

@@ -1,10 +1,16 @@
-/** Shared TypeScript contracts for application state and API payloads. */
+/** Papel de `types`: define os contratos compartilhados entre páginas, componentes e respostas da API.
+ * Ele se conecta aos serviços e componentes importados e entrega sua saída a quem o consome.
+ */
+
+
 
 export type PageKey =
   | 'dashboard'
   | 'estatisticas'
   | 'cadastro'
   | 'materias'
+  | 'vida-academica'
+  | 'pesquisa'
   | 'periodos'
   | 'configuracoes'
   | 'permissoes'
@@ -20,13 +26,17 @@ export interface User {
   turma?: string | null
   hasProfilePhoto?: boolean
   profilePhotoVersion?: number
+
+  mustChangePassword?: boolean
   capabilities?: {
     canManageStudents?: boolean
+    canEditCourseStudents?: boolean
     canRegisterStudents?: boolean
     canDeleteStudents?: boolean
     canExportCsv?: boolean
     canEditOwnSubject?: boolean
     canManageUsers?: boolean
+    mustChangePassword?: boolean
   }
 }
 
@@ -74,7 +84,6 @@ export interface StudentFilters {
   busca_matricula?: string
   busca_nome?: string
   periodo?: number
-  /** Escolhe entre o cadastro que pode ser alterado e um fechamento acadêmico. */
   fonte?: AcademicDataSource
   curso?: string
   turma?: string
@@ -147,6 +156,8 @@ export interface ProfessorSubjectPayload {
 
 export interface StatisticsFilters {
   periodo?: number
+  /** Escolhe os indicadores atuais ou o retrato fechado do período. */
+  fonte?: AcademicDataSource
   busca_nome?: string
   curso?: string
   turma?: string
@@ -250,6 +261,18 @@ export interface StudentPayload {
   subjects: Subject[]
 }
 
+/** Credencial mostrada uma única vez ao criar ou redefinir a conta do aluno. */
+export interface InitialStudentCredentials {
+  usuario: string
+  senhaTemporaria: string
+  exigeTrocaDeSenha: boolean
+}
+
+export interface StudentCreateData {
+  aluno: Student
+  credenciaisIniciais?: InitialStudentCredentials
+}
+
 export interface StudentMovePayload {
   nova_disciplina?: string
   nova_categoria?: string
@@ -265,6 +288,7 @@ export interface StudentImportError {
 export interface StudentImportLine {
   line: number
   matricula?: string | null
+  credenciaisIniciais?: InitialStudentCredentials
 }
 
 export interface StudentImportSkippedLine extends StudentImportLine {
@@ -304,9 +328,11 @@ export interface ApiResult<T> {
   message: string
 }
 
+export type ChatResponseMode = 'local-model' | 'contextual'
+
 export interface ChatResponse {
   message: string
-  mode: 'ai' | 'contextual'
+  mode: ChatResponseMode
   intent: string
   sources: string[]
   scope: {
@@ -327,7 +353,7 @@ export const DEFAULT_PERIODS = [
   'Semestre 2',
 ]
 
-/** True only for roles allowed to edit a complete student enrollment. */
+/** Indica quais perfis podem editar o cadastro completo de um aluno. */
 export function canManageStudents(user: User): boolean {
   if (user.role === 'Professor' || user.role === 'Aluno') return false
   if (typeof user.capabilities?.canManageStudents === 'boolean') {
@@ -336,7 +362,16 @@ export function canManageStudents(user: User): boolean {
   return ['Admin', 'Diretor'].includes(user.role)
 }
 
-/** Controls access to the Cadastro page, including manual registration. */
+/** Indica se o perfil pode editar cadastros dentro do próprio curso autorizado. */
+export function canEditCourseStudents(user: User): boolean {
+  if (user.role === 'Professor' || user.role === 'Aluno') return false
+  if (typeof user.capabilities?.canEditCourseStudents === 'boolean') {
+    return user.capabilities.canEditCourseStudents
+  }
+  return ['Admin', 'Diretor', 'Coordenador'].includes(user.role)
+}
+
+/** Controla o acesso à página Cadastro, incluindo a criação manual de alunos. */
 export function canRegisterStudents(user: User): boolean {
   if (user.role === 'Professor' || user.role === 'Aluno') return false
   if (typeof user.capabilities?.canRegisterStudents === 'boolean') {
@@ -345,7 +380,7 @@ export function canRegisterStudents(user: User): boolean {
   return ['Admin', 'Diretor'].includes(user.role)
 }
 
-/** A professor may update indicators only for the discipline assigned to them. */
+/** O professor pode alterar indicadores somente da disciplina que lhe foi atribuída. */
 export function canEditAssignedSubject(user: User): boolean {
   if (user.role !== 'Professor') return false
   if (typeof user.capabilities?.canEditOwnSubject === 'boolean') {

@@ -1,17 +1,13 @@
 /**
- * src/lib/database.js
- *
- * Central database access and domain logic.
- *
- * Responsibilities:
- *   - Initialize the SQLite database and schema
- *   - Normalize student subject records from legacy columns and JSON
- *   - Persist explicit academic snapshots for historical period comparisons
- *   - Apply role-based visibility filtering for students
- *   - Provide helper fetch methods for UI pages and API endpoints
- *
- * Referenced by: apps/api/src/server.js, apps/api/src/routes/api.js,
- * apps/api/src/lib/auth.js and apps/api/src/scripts/create-admin.js
+ * Papel de `database`: oferece recursos compartilhados ao servidor, como sessão, permissões, respostas e acesso ao banco.
+ * Este arquivo recebe ou produz dados para os módulos indicados pelos imports e exports abaixo.
+ */
+/**
+ * Camada central de acesso ao SQLite: inicializa e migra o banco e atende
+ * às rotas, à autenticação e aos scripts administrativos.
+ * Também mantém compatibilidade com matérias legadas, snapshots de períodos
+ * e consultas de alunos que respeitam o perfil e o curso da sessão.
+ * As páginas React nunca usam este módulo diretamente: elas passam pela API.
  */
 const sqlite3 = require('sqlite3').verbose();
 const path = require('path');
@@ -19,6 +15,7 @@ const fs = require('fs');
 const { subjects, periods } = require('./constants');
 const {
   formatPhone,
+  generateTemporaryStudentPassword,
   getInitialStudentPassword,
   hashPassword,
   normalizeMatricula,
@@ -26,6 +23,8 @@ const {
   verifyPassword
 } = require('./utils');
 const { canAccessStudent } = require('./permissions');
+const { setupAcademicLifeSchema } = require('../modules/academic-life/academicLifeSchema');
+const { setupResearchSchema } = require('../modules/research/researchSchema');
 
 const dbPath = process.env.DATABASE_PATH
   ? path.resolve(process.env.DATABASE_PATH)
@@ -131,9 +130,9 @@ function limitStudentSubjectsByRole(student, user) {
   const visibleSubjects = allowedSubject
     ? entries.filter((entry) => normalizeSubjectName(entry?.name) === allowedSubject)
     : [];
-  // Raw JSON and legacy materiaN columns may contain every subject. Remove
-  // them before a professor-facing response is returned, leaving only the
-  // discipline explicitly assigned to that account.
+  // O JSON bruto e as colunas antigas podem incluir todas as matérias. Remova
+  // esses dados antes de responder ao professor e mantenha somente a disciplina
+  // atribuída à conta dele.
   const {
     materias_json: _storedSubjects,
     materia1: _materia1,
@@ -149,8 +148,8 @@ function limitStudentSubjectsByRole(student, user) {
   const assignedEntry = visibleSubjects[0];
   if (!assignedEntry) return { ...visibleStudent, subjects: [] };
 
-  // A teacher's dashboard and statistics must use the same assigned subject
-  // rather than exposing a student's aggregate from other disciplines.
+  // O painel e as estatísticas do professor usam a matéria atribuída,
+  // sem revelar valores consolidados das outras disciplinas do aluno.
   return {
     ...visibleStudent,
     nota_final: Number(assignedEntry.nota) || 0,
@@ -192,6 +191,133 @@ function getFiniteNonNegativeNumber(value) {
   return Number.isFinite(numericValue) && numericValue >= 0 ? numericValue : null;
 }
 
+/**
+ * Converte campos antigos de frequência para inteiros não negativos, conforme
+ * exige a API. Importações históricas geravam valores separadamente; por isso,
+ * alguns registros têm mais faltas justificadas do que faltas totais.
+ */
+function normalizeAttendanceInteger(value) {
+  const numericValue = Number(value);
+  if (!Number.isFinite(numericValue)) return 0;
+  return Math.max(0, Math.round(numericValue));
+}
+
+function isValidAttendanceInteger(value) {
+  const numericValue = Number(value);
+  return Number.isInteger(numericValue) && numericValue >= 0;
+}
+
+function normalizeSubjectAttendanceEntry(entry) {
+  const source = entry && typeof entry === 'object' && !Array.isArray(entry) ? entry : {};
+  const justificadas = normalizeAttendanceInteger(source.faltas_justificadas);
+  const faltas = Math.max(normalizeAttendanceInteger(source.faltas), justificadas);
+  const totalAulas = Math.max(normalizeAttendanceInteger(source.total_aulas), faltas);
+
+  return {
+    ...source,
+    faltas,
+    faltas_justificadas: justificadas,
+    total_aulas: totalAulas
+  };
+}
+
+function readStoredSubjectEntries(student) {
+  if (!student?.materias_json) return null;
+
+  try {
+    const parsed = typeof student.materias_json === 'string'
+      ? JSON.parse(student.materias_json)
+      : student.materias_json;
+    return Array.isArray(parsed) ? parsed : null;
+  } catch (_error) {
+    // Um JSON antigo inválido deve permanecer intacto para correção manual;
+    // esta migração corrige somente frequências que consegue interpretar.
+    return null;
+  }
+}
+
+function usesLegacySharedWorkload(student, subjectEntries) {
+  const storedTotalAulas = normalizeAttendanceInteger(student?.total_aulas);
+  return storedTotalAulas > 0 && subjectEntries.length > 1 &&
+    subjectEntries.every((entry) => entry.total_aulas === storedTotalAulas);
+}
+
+function summaryFromSubjectAttendance(student, subjectEntries) {
+  const faltas = subjectEntries.reduce((sum, entry) => sum + entry.faltas, 0);
+  const justificadas = subjectEntries.reduce((sum, entry) => sum + entry.faltas_justificadas, 0);
+  const totalAulas = usesLegacySharedWorkload(student, subjectEntries)
+    ? normalizeAttendanceInteger(student.total_aulas)
+    : subjectEntries.reduce((sum, entry) => sum + entry.total_aulas, 0);
+
+  return { faltas, justificadas, totalAulas };
+}
+
+function hasInvalidAttendanceSummary(student) {
+  const faltas = student?.taxa_faltas;
+  const justificadas = student?.faltas_justificadas;
+  const totalAulas = student?.total_aulas;
+
+  return ![faltas, justificadas, totalAulas].every(isValidAttendanceInteger) ||
+    Number(justificadas) > Number(faltas) || Number(faltas) > Number(totalAulas);
+}
+
+function hasAttendanceSummaryValues(student) {
+  return [student?.taxa_faltas, student?.faltas_justificadas, student?.total_aulas]
+    .some((value) => value !== null && value !== undefined && value !== '');
+}
+
+/**
+ * Padroniza a frequência sem descartar faltas já justificadas. Se um registro
+ * indicar zero faltas e duas justificadas, o total passa a duas; se a carga
+ * horária for insuficiente, ela aumenta para preservar o registro.
+ */
+function normalizeLegacyStudentAttendance(student) {
+  const storedSubjects = readStoredSubjectEntries(student);
+
+  if (!storedSubjects) {
+    // Some old history fixtures contain only identity/profile fields. There is
+    // no attendance information to repair, so leave those snapshots intact.
+    if (!hasAttendanceSummaryValues(student)) {
+      return { changed: false, subjectEntriesUpdated: 0, student };
+    }
+    const justificadas = normalizeAttendanceInteger(student?.faltas_justificadas);
+    const faltas = Math.max(normalizeAttendanceInteger(student?.taxa_faltas), justificadas);
+    const totalAulas = Math.max(normalizeAttendanceInteger(student?.total_aulas), faltas);
+    const changed = hasInvalidAttendanceSummary(student);
+
+    return {
+      changed,
+      subjectEntriesUpdated: 0,
+      student: changed
+        ? { ...student, taxa_faltas: faltas, faltas_justificadas: justificadas, total_aulas: totalAulas }
+        : student
+    };
+  }
+
+  const normalizedSubjects = storedSubjects.map(normalizeSubjectAttendanceEntry);
+  const subjectEntriesUpdated = normalizedSubjects.reduce((count, entry, index) => (
+    JSON.stringify(entry) === JSON.stringify(storedSubjects[index]) ? count : count + 1
+  ), 0);
+  const shouldSynchronizeSummary = subjectEntriesUpdated > 0 || hasInvalidAttendanceSummary(student);
+
+  if (!shouldSynchronizeSummary) {
+    return { changed: false, subjectEntriesUpdated: 0, student };
+  }
+
+  const summary = summaryFromSubjectAttendance(student, normalizedSubjects);
+  return {
+    changed: true,
+    subjectEntriesUpdated,
+    student: {
+      ...student,
+      materias_json: subjectEntriesUpdated > 0 ? JSON.stringify(normalizedSubjects) : student.materias_json,
+      taxa_faltas: summary.faltas,
+      faltas_justificadas: summary.justificadas,
+      total_aulas: summary.totalAulas
+    }
+  };
+}
+
 function calculateRisk(student) {
   const subjectEntries = buildSubjectEntriesFromStudent(student, subjects).map((entry) => {
     const nota = Number(entry.nota) || 0;
@@ -230,9 +356,9 @@ function calculateRisk(student) {
   const storedTotalFaltas = getFiniteNonNegativeNumber(student.taxa_faltas);
   const storedTotalJustificadas = getFiniteNonNegativeNumber(student.faltas_justificadas);
 
-  // Older records keep one student-level attendance summary. Prefer it when
-  // complete so that duplicating it across subject entries never dilutes the
-  // absence percentage (for example, 24/100 must remain 24%, not 24/700).
+  // Cadastros antigos guardam um resumo de frequência por aluno. Use-o quando
+  // estiver completo para que a repetição por matéria não reduza o percentual:
+  // 24 faltas em 100 aulas devem continuar sendo 24%, e não 24 em 700.
   const hasStoredAttendanceSummary = storedTotalAulas > 0 &&
     storedTotalFaltas !== null && storedTotalJustificadas !== null;
   const totalAulas = hasStoredAttendanceSummary ? storedTotalAulas : subjectTotalAulas;
@@ -242,8 +368,8 @@ function calculateRisk(student) {
   const taxaFaltasPercent = totalAulas > 0 ? (faltasNetas / totalAulas) * 100 : 0;
   const notaStatus = getMetricStatus(average, 70, 5);
   const faltasStatus = getAttendanceStatus(taxaFaltasPercent, 25, 5);
-  // The dashboard displays the overall grade and absence percentage. Its
-  // risk flags must therefore be derived from those same values, rather than
+  // O painel exibe média geral e percentual de faltas. Os alertas gerais
+  // devem ser calculados com esses mesmos valores, e não
   // from an unrelated subject. Individual subject flags stay on each entry
   // and are used by the Matérias view.
   const hasGradeRisk = notaStatus.isRisk;
@@ -269,6 +395,185 @@ function calculateRisk(student) {
   };
 }
 
+const ACADEMIC_PROJECTION_BATCH_SIZE = 400;
+
+function academicProjectionKey(matricula, subject) {
+  return `${normalizeMatricula(matricula)}\u0000${normalizeSubjectName(subject)}`;
+}
+
+function projectionForSubject(projections, matricula, subject) {
+  const key = academicProjectionKey(matricula, subject);
+  if (!projections.has(key)) {
+    projections.set(key, {
+      name: getTextValue(subject) || 'Matéria',
+      weightedGrade: 0,
+      gradeWeight: 0,
+      totalClasses: 0,
+      registeredClasses: 0,
+      missedClasses: 0,
+      justifiedAbsences: 0,
+      incompleteAttendance: false
+    });
+  }
+  return projections.get(key);
+}
+
+/**
+ * Apresenta os registros normalizados de Vida Acadêmica no formato legado de aluno.
+ * É uma projeção somente para leitura: os diários normalizados seguem como fonte
+ * oficial e painel, boletim, estatísticas e chat compartilham o resultado.
+ */
+async function projectNormalizedAcademicLife(students, periodIndex) {
+  if (!Array.isArray(students) || students.length === 0) return students || [];
+
+  const studentsByMatricula = new Map();
+  for (const student of students) {
+    const matricula = normalizeMatricula(student?.matricula);
+    if (matricula) studentsByMatricula.set(matricula, student);
+  }
+  if (studentsByMatricula.size === 0) return students;
+
+  const projections = new Map();
+  const matriculas = [...studentsByMatricula.keys()];
+
+  for (let offset = 0; offset < matriculas.length; offset += ACADEMIC_PROJECTION_BATCH_SIZE) {
+    const batch = matriculas.slice(offset, offset + ACADEMIC_PROJECTION_BATCH_SIZE);
+    const placeholders = batch.map(() => '?').join(', ');
+    const normalizedBatch = batch.map((matricula) => matricula.toLocaleLowerCase('pt-BR'));
+    const queryParams = [periodIndex, ...normalizedBatch];
+    const enrollmentRows = await allSql(
+      `SELECT d.disciplina, md.matricula
+       FROM diarios_turma d
+       JOIN matriculas_diario md ON md.diario_id = d.id AND md.ativa = 1
+       WHERE d.periodo = ? AND lower(trim(md.matricula)) IN (${placeholders})`,
+      queryParams
+    );
+
+    for (const enrollment of enrollmentRows) {
+      projectionForSubject(projections, enrollment.matricula, enrollment.disciplina);
+    }
+
+    const gradeRows = await allSql(
+      `SELECT d.disciplina, md.matricula, a.peso, n.nota
+       FROM diarios_turma d
+       JOIN matriculas_diario md ON md.diario_id = d.id AND md.ativa = 1
+       JOIN avaliacoes_diario a ON a.diario_id = d.id
+       JOIN notas_avaliacao n ON n.avaliacao_id = a.id
+         AND lower(trim(n.matricula)) = lower(trim(md.matricula))
+       WHERE d.periodo = ? AND lower(trim(md.matricula)) IN (${placeholders})`,
+      queryParams
+    );
+
+    for (const grade of gradeRows) {
+      const value = Number(grade.nota);
+      const weight = Number(grade.peso);
+      if (!Number.isFinite(value) || !Number.isFinite(weight) || weight <= 0) continue;
+      const projection = projectionForSubject(projections, grade.matricula, grade.disciplina);
+      projection.weightedGrade += value * weight;
+      projection.gradeWeight += weight;
+    }
+
+    const attendanceRows = await allSql(
+      `SELECT d.disciplina, md.matricula,
+         COUNT(DISTINCT aula.id) AS total_classes,
+         COUNT(DISTINCT frequencia.aula_id) AS registered_classes,
+         COUNT(DISTINCT CASE WHEN frequencia.situacao = 'FALTA' THEN frequencia.aula_id END) AS missed_classes,
+         COUNT(DISTINCT CASE WHEN frequencia.situacao = 'JUSTIFICADA' THEN frequencia.aula_id END) AS justified_absences
+       FROM diarios_turma d
+       JOIN matriculas_diario md ON md.diario_id = d.id AND md.ativa = 1
+       LEFT JOIN aulas_diario aula ON aula.diario_id = d.id
+       LEFT JOIN frequencias_aula frequencia ON frequencia.aula_id = aula.id
+         AND lower(trim(frequencia.matricula)) = lower(trim(md.matricula))
+       WHERE d.periodo = ? AND lower(trim(md.matricula)) IN (${placeholders})
+       GROUP BY d.id, d.disciplina, md.matricula`,
+      queryParams
+    );
+
+    for (const attendance of attendanceRows) {
+      const projection = projectionForSubject(projections, attendance.matricula, attendance.disciplina);
+      projection.totalClasses += Number(attendance.total_classes) || 0;
+      projection.registeredClasses += Number(attendance.registered_classes) || 0;
+      projection.missedClasses += Number(attendance.missed_classes) || 0;
+      projection.justifiedAbsences += Number(attendance.justified_absences) || 0;
+      if (Number(attendance.total_classes) > 0 &&
+          Number(attendance.registered_classes) < Number(attendance.total_classes)) {
+        projection.incompleteAttendance = true;
+      }
+    }
+  }
+
+  const projectionsByMatricula = new Map();
+  for (const [key, projection] of projections) {
+    const [matricula] = key.split('\u0000');
+    if (!projectionsByMatricula.has(matricula)) projectionsByMatricula.set(matricula, []);
+    projectionsByMatricula.get(matricula).push(projection);
+  }
+
+  return students.map((student) => {
+    const studentProjections = projectionsByMatricula.get(normalizeMatricula(student?.matricula));
+    if (!studentProjections?.length) return student;
+
+    const subjectEntries = buildSubjectEntriesFromStudent(student, subjects).map((entry) => ({ ...entry }));
+    const subjectIndexes = new Map();
+    subjectEntries.forEach((entry, index) => {
+      const key = normalizeSubjectName(entry.name);
+      if (!subjectIndexes.has(key)) subjectIndexes.set(key, []);
+      subjectIndexes.get(key).push(index);
+    });
+
+    let hasNormalizedGrade = false;
+    let hasNormalizedAttendance = false;
+    for (const projection of studentProjections) {
+      const key = normalizeSubjectName(projection.name);
+      let indexes = subjectIndexes.get(key) || [];
+      const hasGrade = projection.gradeWeight > 0;
+      const hasAttendance = projection.totalClasses > 0 &&
+        projection.registeredClasses > 0 &&
+        !projection.incompleteAttendance;
+      if (indexes.length === 0 && !hasGrade && !hasAttendance) continue;
+      if (indexes.length === 0) {
+        indexes = [subjectEntries.length];
+        subjectIndexes.set(key, indexes);
+        subjectEntries.push({
+          name: projection.name,
+          nota: hasGrade ? projection.weightedGrade / projection.gradeWeight : 0,
+          faltas: 0,
+          faltas_justificadas: 0,
+          total_aulas: 0
+        });
+      }
+
+      for (const index of indexes) {
+        if (hasGrade) subjectEntries[index].nota = projection.weightedGrade / projection.gradeWeight;
+        if (hasAttendance) {
+          subjectEntries[index].faltas = projection.missedClasses;
+          subjectEntries[index].faltas_justificadas = projection.justifiedAbsences;
+          subjectEntries[index].total_aulas = projection.totalClasses;
+        }
+      }
+      hasNormalizedGrade ||= hasGrade;
+      hasNormalizedAttendance ||= hasAttendance;
+    }
+
+    if (!hasNormalizedGrade && !hasNormalizedAttendance) return student;
+
+    const attendanceSummary = hasNormalizedAttendance
+      ? summaryFromSubjectAttendance(student, subjectEntries)
+      : null;
+    return {
+      ...student,
+      materias_json: JSON.stringify(subjectEntries),
+      nota_final: hasNormalizedGrade ? null : student.nota_final,
+      ...(attendanceSummary ? {
+        taxa_faltas: attendanceSummary.faltas,
+        faltas_justificadas: attendanceSummary.justificadas,
+        total_aulas: attendanceSummary.totalAulas
+      } : {}),
+      subjects: subjectEntries
+    };
+  });
+}
+
 const HISTORY_STUDENT_FIELDS = [
   'matricula', 'nome', 'telefone', 'cotista', 'cota_detalhada', 'categoria',
   'nota_final', 'taxa_faltas', 'faltas_justificadas', 'total_aulas', 'curso',
@@ -286,9 +591,9 @@ function buildAcademicHistorySnapshot(student, periodIndex) {
     version: 2,
     periodIndex,
     capturedAt: new Date().toISOString(),
-    // The source values are the immutable historical record. The evaluated
-    // status is deliberately derived again when read so a corrected risk rule
-    // cannot leave an old snapshot with inconsistent grades or labels.
+    // Os valores de origem compõem o histórico imutável. A situação é recalculada
+    // na leitura para que mudanças na regra de risco não deixem notas ou rótulos
+    // antigos inconsistentes no snapshot.
     student: source
   };
 }
@@ -376,14 +681,15 @@ async function saveAcademicHistoryPeriod(periodIndex, savedBy, { overwrite = fal
     totalStudents = students.length;
     periodAlreadySaved = existingRows.length > 0;
 
-    // A snapshot closes the roster for that period. New live enrollments
-    // cannot appear in an already-saved period unless an Admin explicitly
-    // confirms the overwrite.
+    // O snapshot fecha a lista de alunos daquele período. Novos cadastros atuais
+    // não aparecem em um período já salvo, a menos que o Admin
+    // confirme explicitamente a substituição.
     if (periodAlreadySaved && !overwrite) {
       unchanged = existingRows.length;
     } else {
       savedAt = requestedAt;
-      for (const student of students) {
+      const projectedStudents = await projectNormalizedAcademicLife(students, periodIndex);
+      for (const student of projectedStudents) {
         const key = normalizeMatricula(student.matricula);
         const snapshot = JSON.stringify(buildAcademicHistorySnapshot(student, periodIndex));
         await runSql(
@@ -404,7 +710,7 @@ async function saveAcademicHistoryPeriod(periodIndex, savedBy, { overwrite = fal
     try {
       await runSql('ROLLBACK');
     } catch (_rollbackError) {
-      // The original database error is more useful to the caller.
+      // A mensagem original do banco é mais útil para quem chamou esta função.
     }
     throw error;
   }
@@ -472,7 +778,6 @@ function insertStudent(student) {
 }
 
 const STUDENT_ACCOUNT_IDENTIFIER_CONFLICT = 'student_account_identifier_conflict';
-const STUDENT_INITIAL_PASSWORD_TOO_LONG = 'student_initial_password_too_long';
 
 function studentAccountProvisionError(code, message) {
   const error = new Error(message);
@@ -480,9 +785,9 @@ function studentAccountProvisionError(code, message) {
   return error;
 }
 
-// Builds the canonical non-secret profile shared by an enrollment and its
-// access account. Keeping this separate from the initial credential lets
-// startup repair stale profile fields without ever replacing a password.
+// Monta o perfil oficial, sem segredos, compartilhado pelo cadastro e pela conta.
+// Separar esses dados da senha permite corrigir informações antigas na inicialização
+// sem substituir a credencial.
 function getStudentAccountIdentityProfile(student) {
   const matricula = normalizeMatricula(student?.matricula);
   if (!matricula) {
@@ -505,17 +810,15 @@ function getStudentAccountIdentityProfile(student) {
 
 function getStudentAccountProfile(student) {
   const profile = getStudentAccountIdentityProfile(student);
-  const initialPassword = getInitialStudentPassword(student?.matricula, student?.nome);
-  if (Buffer.byteLength(initialPassword, 'utf8') > 72) {
-    throw studentAccountProvisionError(
-      STUDENT_INITIAL_PASSWORD_TOO_LONG,
-      'A matrícula e o primeiro nome ultrapassam o tamanho aceito para a senha inicial.'
-    );
-  }
+  const temporaryPassword = generateTemporaryStudentPassword();
 
   return {
-    password: hashPassword(initialPassword),
-    ...profile
+    ...profile,
+    password: hashPassword(temporaryPassword),
+    mustChangePassword: true,
+    // This secret exists only while the authorized creation/reset response is
+    // being built. It is never written to SQLite or returned by a read API.
+    temporaryPassword
   };
 }
 
@@ -529,48 +832,14 @@ function getStudentAccountProfileDifferences(account, profile) {
   ));
 }
 
-function hasStaleInitialStudentPassword(account) {
-  const oldInitialPassword = getInitialStudentPassword(account?.matricula, account?.nome);
-  return Buffer.byteLength(oldInitialPassword, 'utf8') <= 72 &&
-    verifyPassword(oldInitialPassword, account?.password);
-}
-
-// The enrollment is the canonical source for profile details. This repair is
-// limited to non-secret fields unless the hash proves an account is still on
-// the initial password of a different, stale student profile. Custom passwords
-// are never reset by startup reconciliation or an import backfill.
+// O cadastro é a fonte oficial dos dados de perfil. Esta correção
+// altera somente campos que não são secretos. Mudar o nome nunca pode
+// gerar outra senha para o aluno, especialmente agora que as credenciais
+// iniciais são aleatórias e exibidas uma única vez.
 async function synchronizeStudentAccountProfile(account, profile) {
   const changedFields = getStudentAccountProfileDifferences(account, profile);
   if (changedFields.length === 0) {
     return { created: false, synchronized: false, passwordReset: false, userId: account.id, changedFields };
-  }
-
-  const resetInitialPassword = changedFields.includes('nome') && hasStaleInitialStudentPassword(account);
-  if (resetInitialPassword) {
-    const replacementPassword = getStudentAccountProfile(profile).password;
-    const result = await runSql(
-      `UPDATE usuarios
-       SET password = ?, nome = ?, curso = ?, disciplina = ?, turma = ?,
-           session_version = COALESCE(session_version, 0) + 1
-       WHERE id = ? AND role = ? AND password = ?`,
-      [
-        replacementPassword,
-        profile.nome,
-        profile.curso,
-        profile.disciplina,
-        profile.turma,
-        account.id,
-        'Aluno',
-        account.password
-      ]
-    );
-    return {
-      created: false,
-      synchronized: result.changes === 1,
-      passwordReset: result.changes === 1,
-      userId: account.id,
-      changedFields
-    };
   }
 
   const result = await runSql(
@@ -588,10 +857,10 @@ async function synchronizeStudentAccountProfile(account, profile) {
   };
 }
 
-// Creates an account only when the student has none. An already linked
-// account is aligned with the student's current enrollment; its credential is
-// replaced only when a stale initial-password hash is proven safe to replace.
-async function createStudentAccountIfMissing(student) {
+// Cria uma conta somente quando o aluno ainda não possui uma. A conciliação na inicialização
+// usa `provisionIfMissing=false`: gerar uma senha sem um canal
+// de entrega autorizado impediria que o aluno a recebesse.
+async function createStudentAccountIfMissing(student, { provisionIfMissing = true } = {}) {
   const matricula = normalizeMatricula(student?.matricula);
   const existingStudentAccount = await getSql(
     `SELECT id, password, matricula, nome, curso, disciplina, turma FROM usuarios
@@ -603,6 +872,10 @@ async function createStudentAccountIfMissing(student) {
       existingStudentAccount,
       getStudentAccountIdentityProfile(student)
     );
+  }
+
+  if (!provisionIfMissing) {
+    return { created: false, missing: true, synchronized: false, passwordReset: false };
   }
 
   const profile = getStudentAccountProfile(student);
@@ -619,8 +892,9 @@ async function createStudentAccountIfMissing(student) {
   }
 
   const result = await runSql(
-    `INSERT INTO usuarios (username, password, role, matricula, nome, curso, disciplina, turma)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO usuarios (
+       username, password, role, matricula, nome, curso, disciplina, turma, must_change_password
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       profile.username,
       profile.password,
@@ -629,17 +903,101 @@ async function createStudentAccountIfMissing(student) {
       profile.nome,
       profile.curso,
       profile.disciplina,
-      profile.turma
+      profile.turma,
+      profile.mustChangePassword ? 1 : 0
     ]
   );
-  return { created: true, userId: result.lastID };
+  return {
+    created: true,
+    userId: result.lastID,
+    username: profile.username,
+    temporaryPassword: profile.temporaryPassword,
+    mustChangePassword: profile.mustChangePassword
+  };
+}
+
+// Gera uma nova credencial de uso único para a conta ativa do aluno.
+// Quem chama esta função deve verificar se a pessoa da equipe tem permissão
+// antes da chamada. A função não revela a senha antiga nem seu hash.
+async function resetStudentTemporaryPassword(matricula) {
+  const normalizedMatricula = normalizeMatricula(matricula);
+  if (!normalizedMatricula) return null;
+
+  return withImmediateTransaction(async () => {
+    const student = await getStudentByMatricula(normalizedMatricula);
+    if (!student) return null;
+    const account = await getSql(
+      `SELECT id, username
+       FROM usuarios
+       WHERE role = ? AND lower(trim(matricula)) = lower(trim(?))`,
+      ['Aluno', normalizedMatricula]
+    );
+    if (!account) {
+      // Este fluxo cria uma conta para um cadastro antigo que ainda não a possui.
+      // Diferentemente da inicialização automática, quem chamou recebe a senha
+      // temporária e pode entregá-la ao aluno.
+      return createStudentAccountIfMissing(student);
+    }
+
+    const temporaryPassword = generateTemporaryStudentPassword();
+    const result = await runSql(
+      `UPDATE usuarios
+       SET password = ?,
+           must_change_password = 1,
+           session_version = COALESCE(session_version, 0) + 1
+       WHERE id = ? AND role = ?`,
+      [hashPassword(temporaryPassword), account.id, 'Aluno']
+    );
+    if (result.changes !== 1) return null;
+
+    return {
+      userId: account.id,
+      username: account.username,
+      temporaryPassword,
+      mustChangePassword: true
+    };
+  });
+}
+
+function hasLegacyInitialStudentPassword(account) {
+  const legacyPassword = getInitialStudentPassword(account?.matricula, account?.nome);
+  return Buffer.byteLength(legacyPassword, 'utf8') <= 72 &&
+    verifyPassword(legacyPassword, account?.password);
+}
+
+// Versões anteriores usavam matrícula e primeiro nome para criar a senha inicial.
+// Não redefinimos essas contas sem aviso, pois não há um meio seguro
+// exists to deliver a new secret, so they remain login-compatible but are
+// e a próxima operação autenticada exige que a senha seja trocada.
+async function markLegacyStudentAccountsForPasswordChange() {
+  const accounts = await allSql(
+    `SELECT id, password, matricula, nome, must_change_password
+     FROM usuarios
+     WHERE role = ? AND COALESCE(must_change_password, 0) = 0`,
+    ['Aluno']
+  );
+  let marked = 0;
+
+  for (const account of accounts) {
+    if (!hasLegacyInitialStudentPassword(account)) continue;
+    const result = await runSql(
+      `UPDATE usuarios
+       SET must_change_password = 1,
+           session_version = COALESCE(session_version, 0) + 1
+       WHERE id = ? AND role = ? AND COALESCE(must_change_password, 0) = 0`,
+      [account.id, 'Aluno']
+    );
+    marked += result.changes;
+  }
+
+  return marked;
 }
 
 async function rollbackTransaction() {
   try {
     await runSql('ROLLBACK');
   } catch (_error) {
-    // A failed commit may have already ended the transaction.
+    // Uma falha na confirmação pode já ter encerrado a transação.
   }
 }
 
@@ -655,6 +1013,75 @@ async function withImmediateTransaction(action) {
   }
 }
 
+/**
+ * Corrige frequências importadas com valores aleatórios em versões antigas.
+ * A operação pode ser repetida: não altera registros válidos e não produz
+ * novas mudanças quando executada novamente após a correção.
+ */
+async function normalizeLegacyAcademicAttendanceData() {
+  return withImmediateTransaction(async () => {
+    const result = {
+      studentsUpdated: 0,
+      subjectEntriesUpdated: 0,
+      historicalSnapshotsUpdated: 0,
+      historicalSubjectEntriesUpdated: 0
+    };
+    const students = await allSql(
+      `SELECT matricula, taxa_faltas, faltas_justificadas, total_aulas, materias_json
+       FROM alunos`
+    );
+
+    for (const student of students) {
+      const normalized = normalizeLegacyStudentAttendance(student);
+      if (!normalized.changed) continue;
+
+      await runSql(
+        `UPDATE alunos
+         SET taxa_faltas = ?, faltas_justificadas = ?, total_aulas = ?, materias_json = ?
+         WHERE matricula = ?`,
+        [
+          normalized.student.taxa_faltas,
+          normalized.student.faltas_justificadas,
+          normalized.student.total_aulas,
+          normalized.student.materias_json,
+          student.matricula
+        ]
+      );
+      result.studentsUpdated += 1;
+      result.subjectEntriesUpdated += normalized.subjectEntriesUpdated;
+    }
+
+    const snapshots = await allSql(
+      'SELECT matricula, periodo, snapshot_json FROM historico_academico'
+    );
+    for (const snapshotRow of snapshots) {
+      let snapshot;
+      try {
+        snapshot = JSON.parse(snapshotRow.snapshot_json);
+      } catch (_error) {
+        // Preserva o conteúdo histórico inválido para permitir recuperação manual.
+        continue;
+      }
+      if (!snapshot?.student || typeof snapshot.student !== 'object') continue;
+
+      const normalized = normalizeLegacyStudentAttendance(snapshot.student);
+      if (!normalized.changed) continue;
+
+      snapshot.student = normalized.student;
+      await runSql(
+        `UPDATE historico_academico
+         SET snapshot_json = ?
+         WHERE matricula = ? AND periodo = ?`,
+        [JSON.stringify(snapshot), snapshotRow.matricula, snapshotRow.periodo]
+      );
+      result.historicalSnapshotsUpdated += 1;
+      result.historicalSubjectEntriesUpdated += normalized.subjectEntriesUpdated;
+    }
+
+    return result;
+  });
+}
+
 function getEmptyStudentAccountCleanupResult() {
   return { deletedAccounts: 0, deletedSessions: 0 };
 }
@@ -664,7 +1091,7 @@ function getSessionUserId(serializedSession) {
     const userId = Number(JSON.parse(serializedSession)?.user?.id);
     return Number.isInteger(userId) && userId > 0 ? userId : null;
   } catch (_error) {
-    // Malformed sessions are handled by the session store when they are read.
+    // O armazenamento de sessão trata registros inválidos quando os consulta.
     // This cleanup is intentionally limited to sessions proven to belong to a
     // deleted student account.
     return null;
@@ -672,7 +1099,7 @@ function getSessionUserId(serializedSession) {
 }
 
 async function deleteSessionsByIds(sessionIds) {
-  // SQLite commonly limits a statement to 999 bound values. Chunking keeps
+  // O SQLite costuma limitar cada instrução a 999 parâmetros. Dividir a operação
   // cleanup safe even if a large set of old accounts has active sessions.
   for (let index = 0; index < sessionIds.length; index += 500) {
     const chunk = sessionIds.slice(index, index + 500);
@@ -681,9 +1108,9 @@ async function deleteSessionsByIds(sessionIds) {
   }
 }
 
-// Staff accounts are distinct from automatic student accounts. This narrow
-// operation is used only by the administrator's Permissions screen and never
-// accepts Admin or Aluno accounts as deletion targets.
+// Contas da equipe são diferentes das contas automáticas de alunos. Esta função
+// é usada somente pela tela de permissões do Admin e não permite excluir
+// contas de Admin ou de aluno.
 async function deleteStaffUserById(userId) {
   const normalizedUserId = Number(userId);
   if (!Number.isInteger(normalizedUserId) || normalizedUserId < 1) return null;
@@ -694,13 +1121,13 @@ async function deleteStaffUserById(userId) {
       [normalizedUserId]
     );
     if (!user) return { deleted: false, reason: 'not_found' };
-    if (!['Professor', 'Diretor'].includes(user.role)) {
+    if (!['Professor', 'Coordenador', 'Diretor'].includes(user.role)) {
       return { deleted: false, reason: 'protected' };
     }
 
     const result = await runSql(
-      'DELETE FROM usuarios WHERE id = ? AND role IN (?, ?)',
-      [normalizedUserId, 'Professor', 'Diretor']
+      'DELETE FROM usuarios WHERE id = ? AND role IN (?, ?, ?)',
+      [normalizedUserId, 'Professor', 'Coordenador', 'Diretor']
     );
     if (result.changes !== 1) return { deleted: false, reason: 'not_found' };
 
@@ -778,7 +1205,7 @@ function logStudentAccountCleanup(result, context) {
 }
 
 // Public wrapper used during startup and by controlled maintenance commands.
-// It is intentionally unable to delete Admin, Diretor or Professor accounts.
+// It is intentionally unable to delete Admin, Coordenador, Diretor or Professor accounts.
 async function cleanupOrphanStudentAccounts(context = 'inicializa\u00e7\u00e3o') {
   const result = await withImmediateTransaction(cleanupOrphanStudentAccountsInTransaction);
   logStudentAccountCleanup(result, context);
@@ -802,9 +1229,9 @@ async function createStudentWithAccount(student) {
   return transactionResult.account;
 }
 
-// Safely provisions missing accounts and reconciles stale profiles from older
-// data. A credential changes only when its old bcrypt hash proves it is still
-// the initial password of a different profile.
+// Startup reconciliation aligns existing account profiles but intentionally
+// does not create missing accounts: a cryptographically random password must
+// be delivered in the same authorized request that provisions it.
 async function backfillStudentAccounts() {
   const students = await allSql(
     'SELECT * FROM alunos ORDER BY matricula'
@@ -812,18 +1239,25 @@ async function backfillStudentAccounts() {
   let created = 0;
   let synchronized = 0;
   let passwordResets = 0;
+  let pendingCredentials = 0;
   let skipped = 0;
 
   for (const student of students) {
     try {
-      const result = await withImmediateTransaction(() => createStudentAccountIfMissing(student));
+      const result = await withImmediateTransaction(() => createStudentAccountIfMissing(
+        student,
+        { provisionIfMissing: false }
+      ));
+      if (result.missing) {
+        pendingCredentials += 1;
+        continue;
+      }
       if (result.created) created += 1;
       if (result.synchronized) synchronized += 1;
       if (result.passwordReset) passwordResets += 1;
     } catch (error) {
       if (
-        error?.code === STUDENT_ACCOUNT_IDENTIFIER_CONFLICT ||
-        error?.code === STUDENT_INITIAL_PASSWORD_TOO_LONG
+        error?.code === STUDENT_ACCOUNT_IDENTIFIER_CONFLICT
       ) {
         skipped += 1;
         continue;
@@ -835,8 +1269,11 @@ async function backfillStudentAccounts() {
   if (created > 0) console.log(`${created} conta(s) de aluno criada(s) automaticamente.`);
   if (synchronized > 0) console.warn(`${synchronized} perfil(is) de conta de aluno foram sincronizados com o cadastro.`);
   if (passwordResets > 0) console.warn(`${passwordResets} senha(s) inicial(is) de perfil desatualizado foram redefinida(s) com segurança.`);
-  if (skipped > 0) console.warn(`${skipped} conta(s) de aluno não puderam ser criadas automaticamente por conflito de identificador ou senha inicial longa.`);
-  return { created, synchronized, passwordResets, skipped };
+  if (pendingCredentials > 0) {
+    console.warn(`${pendingCredentials} aluno(s) sem conta aguardam emissão segura de senha temporária por um gestor autorizado.`);
+  }
+  if (skipped > 0) console.warn(`${skipped} conta(s) de aluno não puderam ser criadas automaticamente por conflito de identificador.`);
+  return { created, synchronized, passwordResets, pendingCredentials, skipped };
 }
 
 function normalizeSearchText(value) {
@@ -886,7 +1323,7 @@ function scopeSqlForUser(user) {
       params: [normalizedMatricula]
     };
   }
-  if (role === 'Diretor' && normalizedCurso) {
+  if ((role === 'Diretor' || role === 'Coordenador') && normalizedCurso) {
     return {
       where: ' WHERE lower(trim(curso)) = lower(trim(?))',
       params: [normalizedCurso]
@@ -960,17 +1397,22 @@ async function fetchVisibleStudents(req, { paginate = false } = {}) {
   const historyByMatricula = await getHistoryByPeriod(periodIndex);
   const periodSaved = historyByMatricula.size > 0;
   const snapshotAt = getLatestSnapshotAt(historyByMatricula);
-  const studentsWithSource = !useCurrentSource && periodSaved
-    ? Array.from(historyByMatricula.values()).map((historical) => ({
+  let studentsWithSource;
+  if (!useCurrentSource && periodSaved) {
+    studentsWithSource = Array.from(historyByMatricula.values()).map((historical) => ({
       student: historical.student,
       source: 'historico',
       capturedAt: historical.capturedAt
-    }))
-    : (await fetchCurrentStudentsForScope(req.session.user)).map((student) => ({
+    }));
+  } else {
+    const students = await fetchCurrentStudentsForScope(req.session.user);
+    const projectedStudents = await projectNormalizedAcademicLife(students, periodIndex);
+    studentsWithSource = projectedStudents.map((student) => ({
       student: calculateRisk(student),
       source: 'atual',
       capturedAt: null
     }));
+  }
   const visibleEntries = studentsWithSource.filter(({ student }) => (
     canAccessStudent(req.session.user, student) &&
     (!search || includesSearchText(student.matricula, search) || includesSearchText(student.nome, search)) &&
@@ -985,10 +1427,10 @@ async function fetchVisibleStudents(req, { paginate = false } = {}) {
   const orderedEntries = projectedEntries.toSorted((left, right) => (
     compareStudents(left.student, right.student, pagination.sort, pagination.direction)
   ));
-  // Keep the list rows compact, but provide the complete subject catalog for
-  // the active authorized result set. Calculating it before pagination means
-  // the Matérias screen never loses a discipline that happens to be on a
-  // later page of the search result.
+  // Mantém cada linha compacta, mas fornece a lista completa de matérias
+  // do conjunto autorizado. Calculá-la antes da paginação garante que
+  // a tela Matérias não perca uma disciplina que apareça somente
+  // em uma página seguinte dos resultados.
   const subjectNames = collectSubjectNames(orderedEntries.map((entry) => entry.student));
   const total = orderedEntries.length;
   const totalPages = Math.max(1, Math.ceil(total / pagination.pageSize));
@@ -1075,6 +1517,7 @@ async function fetchHistoricalStudents(req, periodIndex) {
 }
 
 async function setupDatabase() {
+  await setupResearchSchema(runSql);
   await runSql(`CREATE TABLE IF NOT EXISTS alunos (
       matricula TEXT PRIMARY KEY,
       nome TEXT,
@@ -1111,6 +1554,7 @@ async function setupDatabase() {
       disciplina TEXT,
       turma TEXT,
       session_version INTEGER NOT NULL DEFAULT 0,
+      must_change_password INTEGER NOT NULL DEFAULT 0,
       foto_perfil BLOB,
       foto_perfil_tipo TEXT,
       foto_perfil_versao INTEGER NOT NULL DEFAULT 0
@@ -1156,9 +1600,9 @@ async function setupDatabase() {
       WHERE role = 'Aluno' AND lower(trim(matricula)) = lower(trim(OLD.matricula));
     END`);
 
-  // Historical records intentionally outlive a current enrollment. Drop the
-  // trigger from an earlier schema revision if this database was initialized
-  // before that rule was corrected.
+  // Registros históricos continuam existindo após o encerramento do cadastro. Remova
+  // o gatilho de uma versão anterior caso este banco tenha sido inicializado
+  // antes da correção dessa regra.
   await runSql('DROP TRIGGER IF EXISTS delete_student_history_after_student_delete');
 
   await ensureColumns('alunos', [
@@ -1181,24 +1625,39 @@ async function setupDatabase() {
       { name: 'disciplina', definition: 'TEXT' },
       { name: 'turma', definition: 'TEXT' },
       { name: 'session_version', definition: 'INTEGER NOT NULL DEFAULT 0' },
+      { name: 'must_change_password', definition: 'INTEGER NOT NULL DEFAULT 0' },
       { name: 'foto_perfil', definition: 'BLOB' },
       { name: 'foto_perfil_tipo', definition: 'TEXT' },
       { name: 'foto_perfil_versao', definition: 'INTEGER NOT NULL DEFAULT 0' }
   ]);
 
-  // Remove only student accounts that no longer have an enrollment before
-  // enforcing account indexes or provisioning missing accounts. This leaves
-  // staff accounts and academic snapshots untouched.
+  const normalizedAcademicData = await normalizeLegacyAcademicAttendanceData();
+  if (normalizedAcademicData.studentsUpdated > 0 || normalizedAcademicData.historicalSnapshotsUpdated > 0) {
+    console.warn(
+      `Normalização acadêmica: ${normalizedAcademicData.studentsUpdated} aluno(s), ` +
+      `${normalizedAcademicData.subjectEntriesUpdated} matéria(s) e ` +
+      `${normalizedAcademicData.historicalSnapshotsUpdated} histórico(s) ajustado(s).`
+    );
+  }
+
+  const legacyPasswordsMarked = await markLegacyStudentAccountsForPasswordChange();
+  if (legacyPasswordsMarked > 0) {
+    console.warn(`${legacyPasswordsMarked} conta(s) de aluno com senha inicial legada exigirão troca de senha no próximo acesso.`);
+  }
+
+  // Remove somente contas de aluno sem cadastro ativo antes de
+  // aplicar índices ou provisionar contas ausentes. Assim, permanecem intactos
+  // as contas da equipe e os snapshots acadêmicos.
   await cleanupOrphanStudentAccounts();
 
-  // The primary key alone treats `A1` and `a1` as different values. This
-  // expression index keeps legacy lookups compatible while preventing that
-  // ambiguity for all future registrations and CSV imports.
+  // A chave primária diferencia `A1` de `a1`. Este índice
+  // mantém a compatibilidade com buscas antigas e evita essa
+  // ambiguidade em novos cadastros e importações CSV.
   await runSql(`CREATE UNIQUE INDEX IF NOT EXISTS unique_alunos_matricula_normalizada
     ON alunos (lower(trim(matricula)))`);
 
-  // These indexes support the server-side scope checks used by the list,
-  // statistics and chat modules without exposing the whole student table to
+  // Estes índices aceleram as verificações de escopo usadas na listagem,
+  // nas estatísticas e no chat, sem expor a tabela inteira de alunos
   // a narrower profile.
   await runSql(`CREATE INDEX IF NOT EXISTS alunos_escopo_academico_idx
     ON alunos (lower(trim(curso)), lower(trim(disciplina)), lower(trim(turma)))`);
@@ -1209,8 +1668,8 @@ async function setupDatabase() {
     ON usuarios (lower(trim(matricula)))
     WHERE role = 'Aluno' AND trim(COALESCE(matricula, '')) <> ''`);
 
-  // Keep name-based login and the academic access scope current after an
-  // administrator edits a student's registration. Passwords are untouched.
+  // Mantém o login por nome e o escopo acadêmico atualizados quando o Admin
+  // altera o cadastro do aluno. As senhas não são modificadas.
   await runSql('DROP TRIGGER IF EXISTS sync_student_account_after_student_update');
   await runSql(`CREATE TRIGGER sync_student_account_after_student_update
     AFTER UPDATE OF nome, curso, disciplina, turma ON alunos
@@ -1224,6 +1683,10 @@ async function setupDatabase() {
     END`);
 
   await backfillStudentAccounts();
+
+  // The Vida Acadêmica domain is intentionally additive: it does not rewrite
+  // os campos consolidados legados de matérias usados nos painéis existentes.
+  await setupAcademicLifeSchema(runSql, allSql);
 
 }
 
@@ -1240,12 +1703,15 @@ async function getVisibleStudentDataByMatricula(user, matricula, periodIndex = 0
   ]);
   const snapshot = readAcademicHistorySnapshot(historyRow, periodIndex);
   const useCurrentSource = source === 'atual';
-  // Once the period roster is closed, current records absent from it must not
-  // leak into historical views. This also still permits a deleted student to
-  // be read from their saved snapshot.
+  const currentStudent = student
+    ? (await projectNormalizedAcademicLife([student], periodIndex))[0]
+    : null;
+  // Depois de encerrar a lista do período, cadastros atuais ausentes nela não podem
+  // aparecer nas consultas históricas. Ainda é possível consultar os dados
+  // preservados no snapshot de um aluno removido.
   const visibleStudent = useCurrentSource
-    ? (student ? calculateRisk(student) : null)
-    : (snapshot?.student || (!periodSnapshot && student ? calculateRisk(student) : null));
+    ? (currentStudent ? calculateRisk(currentStudent) : null)
+    : (snapshot?.student || (!periodSnapshot && currentStudent ? calculateRisk(currentStudent) : null));
   if (!visibleStudent) return null;
   if (!canAccessStudent(user, visibleStudent)) return null;
 
@@ -1279,6 +1745,7 @@ module.exports = {
   runSql,
   getSql,
   allSql,
+  withImmediateTransaction,
   setupDatabase,
   backupDatabase,
   buildSubjectEntriesFromStudent,
@@ -1286,6 +1753,7 @@ module.exports = {
   collectSubjectNames,
   fetchVisibleStudents,
   fetchHistoricalStudents,
+  projectNormalizedAcademicLife,
   getVisibleStudentDataByMatricula,
   getVisibleStudentByMatricula,
   getStudentByMatricula,
@@ -1293,6 +1761,9 @@ module.exports = {
   deleteStudentByMatricula,
   deleteStaffUserById,
   cleanupOrphanStudentAccounts,
+  normalizeLegacyAcademicAttendanceData,
   createStudentWithAccount,
-  updateStudentFields
+  resetStudentTemporaryPassword,
+  updateStudentFields,
+  setupAcademicLifeSchema
 };

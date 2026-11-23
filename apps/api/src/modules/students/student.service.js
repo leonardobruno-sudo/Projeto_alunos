@@ -1,6 +1,10 @@
 /**
- * Student list service. It deliberately delegates scope enforcement to the
- * shared data layer, which derives all visibility from the server session.
+ * Papel de `student.service`: implementa regras de negócio do domínio e conversa com os serviços compartilhados e o banco sem depender da interface.
+ * Este arquivo recebe ou produz dados para os módulos indicados pelos imports e exports abaixo.
+ */
+/**
+ * Serviço de listagem de alunos; o escopo é aplicado pela camada de dados compartilhada.
+ * Essa camada define a visibilidade com base na sessão autenticada no servidor.
  */
 const { fetchVisibleStudents } = require('../../lib/database');
 

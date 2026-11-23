@@ -1,3 +1,7 @@
+/**
+ * Papel de `knowledgeBase`: implementa regras de negócio do domínio e conversa com os serviços compartilhados e o banco sem depender da interface.
+ * Este arquivo recebe ou produz dados para os módulos indicados pelos imports e exports abaixo.
+ */
 'use strict';
 
 const STOP_WORDS = new Set([
@@ -61,6 +65,38 @@ const KNOWLEDGE_ARTICLES = Object.freeze([
     keywords: ['assistente', 'ajuda', 'chat', 'perguntar', 'pergunta', 'consultar', 'comando', 'funciona'],
     answer: 'Você pode escrever a pergunta com suas palavras. O assistente responde orientações do SGAC e de acessibilidade a partir de conteúdo mantido no código. Consultas acadêmicas são somente de leitura e limitadas ao seu perfil autenticado. Não envie senhas nem dados pessoais desnecessários.',
     source: 'Guia de contribuicao do SGAC',
+    url: null
+  },
+  {
+    id: 'student-bulletin',
+    title: 'Consultar o boletim e as matérias',
+    keywords: ['boletim', 'materias', 'notas', 'nota', 'desempenho', 'periodo', 'pdf', 'bimestre', 'semestre'],
+    answer: 'Consultar o boletim\n\n1. Abra a seção Matérias para ver as disciplinas e os indicadores disponíveis no seu perfil.\n2. Selecione o período que deseja consultar. A tela informa se os dados são atuais ou de um histórico salvo.\n3. No perfil de aluno, use a opção de baixar o boletim em PDF quando precisar de uma cópia.\n\nO sistema mostra apenas os registros permitidos para a sua conta.',
+    source: 'Guia de uso do SGAC — Matérias e boletim',
+    url: null
+  },
+  {
+    id: 'academic-life-attendance',
+    title: 'Frequência e diários acadêmicos',
+    keywords: ['frequencia', 'falta', 'faltas', 'presenca', 'presenca', 'diario', 'aula', 'lancar'],
+    answer: 'Frequência e diário acadêmico\n\n1. Abra Vida acadêmica e escolha a área de frequência ou o diário disponível para o seu perfil.\n2. O professor responsável registra a aula antes de lançar a presença de cada estudante.\n3. O estudante consulta as próprias presenças e faltas nos diários em que está matriculado.\n\nO assistente apenas consulta informações: use as telas da Vida acadêmica para registrar ou corrigir dados.',
+    source: 'Guia de uso do SGAC — Vida acadêmica',
+    url: null
+  },
+  {
+    id: 'account-settings',
+    title: 'Senha e foto do perfil',
+    keywords: ['trocar senha', 'alterar senha', 'redefinir senha', 'foto perfil', 'foto', 'configuracoes conta', 'password'],
+    answer: 'Senha e foto do perfil\n\n1. Abra Configurações no menu do sistema.\n2. Use os controles de senha para alterá-la ou os controles da foto para enviar, trocar ou remover sua própria imagem.\n3. Se a conta de aluno exigir a troca de uma senha temporária, conclua essa etapa antes de abrir as demais áreas.\n\nNunca envie sua senha pelo chat. O assistente não consegue alterar a senha por você.',
+    source: 'Guia de uso do SGAC — Configurações',
+    url: null
+  },
+  {
+    id: 'academic-risk-meaning',
+    title: 'Como interpretar os alertas acadêmicos',
+    keywords: ['risco', 'alerta', 'nota baixa', 'faltas limite', 'evasao', 'evasão', 'indicador'],
+    answer: 'Como interpretar os alertas acadêmicos\n\nO SGAC marca risco acadêmico quando a nota fica abaixo de 70 ou quando as faltas líquidas chegam a 25% ou mais. Próximo desses limites pode aparecer um alerta.\n\nEsse sinal descreve nota e frequência no acompanhamento acadêmico; não é um modelo preditivo de evasão nem substitui avaliação e acolhimento pela equipe responsável.',
+    source: 'README do SGAC — regras atuais dos indicadores acadêmicos',
     url: null
   },
   {

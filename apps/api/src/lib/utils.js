@@ -1,15 +1,20 @@
-/** Common formatting, normalization and password helpers used by the server. */
+/**
+ * Papel de `utils`: oferece recursos compartilhados ao servidor, como sessão, permissões, respostas e acesso ao banco.
+ * Este arquivo recebe ou produz dados para os módulos indicados pelos imports e exports abaixo.
+ */
+/** Funções compartilhadas pelo servidor para formatar e normalizar dados e proteger senhas. */
 
 const bcrypt = require('bcryptjs');
+const crypto = require('crypto');
 
 /**
- * src/lib/utils.js
+ * Arquivo: `src/lib/utils.js`.
  *
- * Shared utility functions for string normalization and password hashing.
+ * Funções compartilhadas para normalizar textos e gerar hashes de senha.
  *
- * Used by:
- *   - src/lib/database.js
- *   - src/routes/api.js
+ * Usado por:
+ *   - `src/lib/database.js`.
+ *   - `src/routes/api.js`.
  */
 function formatPhone(value) {
   const phone = (value || '').replace(/\D/g, '');
@@ -23,11 +28,18 @@ function getFirstName(nome) {
   return (nome || '').trim().split(/\s+/)[0] || 'aluno';
 }
 
-// Keeps the institution's existing first-access convention in one place.
-// Callers must hash this value before persistence and should encourage the
-// student to change it after the first login.
+// A regra antiga de primeiro acesso serve somente para reconhecer contas
+// criadas em versões anteriores. Não a use para criar contas novas: matrícula
+// e nome são identificadores previsíveis, não credenciais seguras.
 function getInitialStudentPassword(matricula, nome) {
   return `IFRR.${String(matricula || '').trim()}@${getFirstName(nome)}`;
+}
+
+// A senha temporária existe em memória e é mostrada uma vez à pessoa autorizada
+// que criou ou redefiniu a conta. No banco fica somente seu hash bcrypt.
+// A senha aleatória em hexadecimal é fácil de distinguir quando entregue pela secretaria.
+function generateTemporaryStudentPassword() {
+  return `SGAC-${crypto.randomBytes(18).toString('hex')}`;
 }
 
 function hashPassword(password) {
@@ -47,15 +59,14 @@ function normalizeLookupValue(value) {
   return (value || '').toString().trim().toLowerCase();
 }
 
-// Student registration numbers are identifiers, not display text. Keep their
-// persisted representation predictable while database lookups remain tolerant
-// of older rows that were stored with different casing or outer whitespace.
+// Matrículas são identificadores, não texto de exibição. Mantemos o formato
+// salvo previsível e aceitamos diferenças antigas de caixa ou espaços nas buscas.
 function normalizeMatricula(value) {
   return String(value ?? '').trim().toUpperCase();
 }
 
-// normalizeSubjectName is used to compare user-provided subject names in a
-// case-insensitive, whitespace-normalized way.
+// Compara nomes de matérias informados pelas pessoas sem diferenciar
+// maiúsculas e minúsculas e depois de normalizar os espaços.
 function normalizeSubjectName(value) {
   return (value || '').trim().toLowerCase().replace(/\s+/g, ' ');
 }
@@ -64,6 +75,7 @@ module.exports = {
   formatPhone,
   getFirstName,
   getInitialStudentPassword,
+  generateTemporaryStudentPassword,
   hashPassword,
   verifyPassword,
   isPasswordHash,

@@ -1,3 +1,4 @@
+/* ChatDrawer.module: estiliza o componente ou a página que importa esta folha. As classes fazem a ponte entre estado visual, conteúdo e comandos dos componentes React. */
 .backdrop {
   position: fixed;
   z-index: 70;

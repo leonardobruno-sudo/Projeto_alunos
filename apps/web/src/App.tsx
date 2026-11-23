@@ -2,15 +2,18 @@
 
 import { useCallback, useEffect, useState } from 'react'
 import { AppShell } from './components/AppShell'
+import { InitialPasswordPage } from './components/InitialPasswordPage'
 import { LoginPage } from './components/LoginPage'
 import { ChatDrawer } from './features/chat'
 import { DashboardPage } from './pages/DashboardPage'
+import { AcademicLifeRoutePage } from './pages/AcademicLifePage'
 import { PermissionsPage } from './pages/PermissionsPage'
 import { PeriodsPage } from './pages/PeriodsPage'
 import { RegistrationPage } from './pages/RegistrationPage'
 import { SettingsPage } from './pages/SettingsPage'
 import type { AccessibilityPreferences } from './pages/SettingsPage'
 import { StatisticsPage } from './pages/StatisticsPage'
+import { ResearchPage } from './pages/ResearchPage'
 import { SubjectsPage } from './pages/SubjectsPage'
 import { canRegisterStudents, type PageKey, type User } from './types'
 import { api, getErrorMessage, isUnauthorized } from './utils/api'
@@ -20,7 +23,7 @@ type Notice = {
   type: 'success' | 'error'
 }
 
-const pages: PageKey[] = ['dashboard', 'estatisticas', 'cadastro', 'materias', 'periodos', 'configuracoes', 'permissoes']
+const pages: PageKey[] = ['dashboard', 'estatisticas', 'cadastro', 'materias', 'vida-academica', 'pesquisa', 'periodos', 'configuracoes', 'permissoes']
 
 function pageFromHash(): PageKey {
   const hash = window.location.hash.replace('#', '')
@@ -62,6 +65,8 @@ function App() {
   const [loggingOut, setLoggingOut] = useState(false)
   const [chatOpen, setChatOpen] = useState(false)
   const [notice, setNotice] = useState<Notice | null>(null)
+  const [requiredPasswordError, setRequiredPasswordError] = useState('')
+  const [savingRequiredPassword, setSavingRequiredPassword] = useState(false)
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme
@@ -77,12 +82,18 @@ function App() {
 
   useEffect(() => {
     function syncPageFromHash() {
-      setPage(pageFromHash())
+      const nextPage = pageFromHash()
+      if (nextPage === 'pesquisa' && user?.role !== 'Admin') {
+        setPage('dashboard')
+        window.location.hash = 'dashboard'
+        return
+      }
+      setPage(nextPage)
     }
 
     window.addEventListener('hashchange', syncPageFromHash)
     return () => window.removeEventListener('hashchange', syncPageFromHash)
-  }, [])
+  }, [user?.role])
 
   useEffect(() => {
     let active = true
@@ -107,6 +118,13 @@ function App() {
   }, [])
 
   useEffect(() => {
+    if (user && user.role !== 'Admin' && page === 'pesquisa') {
+      setPage('dashboard')
+      window.location.hash = 'dashboard'
+    }
+  }, [page, user])
+
+  useEffect(() => {
     if (!notice) return undefined
     const timeout = window.setTimeout(() => setNotice(null), 5000)
     return () => window.clearTimeout(timeout)
@@ -128,6 +146,7 @@ function App() {
   function navigate(nextPage: PageKey) {
     if (!user) return
     if (nextPage === 'permissoes' && user.role !== 'Admin') return
+    if (nextPage === 'pesquisa' && user.role !== 'Admin') return
     if (nextPage === 'cadastro' && !canRegisterStudents(user)) return
 
     setPage(nextPage)
@@ -160,6 +179,22 @@ function App() {
     showMessage(message)
   }
 
+  async function changeRequiredPassword(payload: { currentPassword: string; newPassword: string; confirmPassword: string }) {
+    setRequiredPasswordError('')
+    setSavingRequiredPassword(true)
+    try {
+      const result = await api.changePassword(payload)
+      setUser((currentUser) => currentUser
+        ? { ...currentUser, ...result.data, capabilities: result.data.capabilities ?? currentUser.capabilities }
+        : result.data)
+      showMessage(result.message || 'Senha alterada com sucesso.')
+    } catch (requestError) {
+      setRequiredPasswordError(getErrorMessage(requestError))
+    } finally {
+      setSavingRequiredPassword(false)
+    }
+  }
+
   if (loadingSession) {
     return <main aria-busy="true" aria-live="polite" className="startup-state" role="status">Carregando sistema...</main>
   }
@@ -177,6 +212,18 @@ function App() {
     )
   }
 
+  if (user.mustChangePassword || user.capabilities?.mustChangePassword) {
+    return (
+      <InitialPasswordPage
+        errorMessage={requiredPasswordError}
+        onLogout={() => void logout()}
+        onSubmit={changeRequiredPassword}
+        saving={savingRequiredPassword}
+        user={user}
+      />
+    )
+  }
+
   let content = <DashboardPage onError={handleError} onMessage={showMessage} user={user} />
 
   if (page === 'estatisticas') {
@@ -185,6 +232,10 @@ function App() {
     content = <RegistrationPage onError={handleError} onMessage={showMessage} user={user} />
   } else if (page === 'materias') {
     content = <SubjectsPage onError={handleError} onMessage={showMessage} user={user} />
+  } else if (page === 'vida-academica') {
+    content = <AcademicLifeRoutePage onError={handleError} onMessage={showMessage} user={user} />
+  } else if (page === 'pesquisa' && user.role === 'Admin') {
+    content = <ResearchPage onError={handleError} onMessage={showMessage} user={user} />
   } else if (page === 'periodos') {
     content = <PeriodsPage onError={handleError} onMessage={showMessage} user={user} />
   } else if (page === 'configuracoes') {
@@ -229,7 +280,7 @@ function App() {
       </AppShell>
       <ChatDrawer
         onClose={() => setChatOpen(false)}
-        onSend={async (message) => (await api.chat(message)).data}
+        onSend={async (message, contextMessage) => (await api.chat(message, contextMessage)).data}
         open={chatOpen}
         user={user}
       />

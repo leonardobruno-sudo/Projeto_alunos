@@ -1,6 +1,10 @@
+/** Papel de `student.dto`: agrupa uma funcionalidade do produto e integra sua apresentação com os tipos e serviços que a alimentam.
+ * Ele se conecta aos serviços e componentes importados e entrega sua saída a quem o consome.
+ */
+
 /**
- * DTOs at the React boundary. API values are treated as unknown before this
- * module turns them into the compact shapes rendered by the student search.
+ * DTOs na fronteira do React. Os dados da API são tratados como desconhecidos
+ * até este módulo convertê-los no formato compacto da busca de alunos.
  */
 import type { AcademicDataSource, Student, StudentListData } from '../../types'
 
@@ -58,7 +62,7 @@ export function toStudentListItemDto(student: Student): StudentListItemDto {
   }
 }
 
-/** Converts the API list envelope into a predictable view model. */
+/** Converte a resposta paginada da API em um formato previsível para a interface. */
 export function toStudentListDto(data: StudentListData | Student[]): StudentListDto {
   const envelope = Array.isArray(data) ? { alunos: data } : data
   const alunos = (envelope.alunos ?? envelope.students ?? []).map(toStudentListItemDto)

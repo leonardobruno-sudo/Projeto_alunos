@@ -1,9 +1,13 @@
 /**
- * Public integration surface for the isolated SGAC AI module.
+ * Papel de `ai`: implementa regras de negócio do domínio e conversa com os serviços compartilhados e o banco sem depender da interface.
+ * Este arquivo recebe ou produz dados para os módulos indicados pelos imports e exports abaixo.
+ */
+/**
+ * Interface pública para integrar o módulo independente de IA do SGAC.
  *
- * Example (in a future route file):
+ * Exemplo de uso em um arquivo de rotas:
  *   const { registerChatRoute } = require('../modules/ai');
- *   registerChatRoute(router); // registers authenticated POST /chat
+ *   registerChatRoute(router); // registra POST /chat com autenticação
  */
 'use strict';
 

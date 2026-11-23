@@ -1,6 +1,10 @@
 /**
- * JSON authentication endpoints for login, session lookup, logout and
- * password changes with rate limiting on invalid logins.
+ * Papel de `auth`: recebe requisições HTTP, valida sessão e entrada, aplica permissões e encaminha os dados à regra de negócio ou ao banco.
+ * Este arquivo recebe ou produz dados para os módulos indicados pelos imports e exports abaixo.
+ */
+/**
+ * Rotas JSON para entrar, consultar a sessão, sair e alterar senha,
+ * com limite de tentativas inválidas de acesso.
  */
 const express = require('express');
 const multer = require('multer');
@@ -51,18 +55,21 @@ function receiveProfilePhoto(req, res, next) {
 }
 
 function getSessionData(user) {
-  // Teachers follow their assigned subject through a dedicated scoped route;
-  // they do not manage the full student enrollment.
+  // O professor usa uma rota específica e limitada à matéria que lhe foi atribuída;
+  // ele não gerencia o cadastro completo do aluno.
   const canManageStudents = canRegisterStudents(user);
+  const canEditCourseStudents = ['Admin', 'Diretor', 'Coordenador'].includes(user.role);
   const canManageUsers = user.role === 'Admin';
   return {
     user,
     capabilities: {
       canManageStudents,
+      canEditCourseStudents,
       canRegisterStudents: canRegisterStudents(user),
       canDeleteStudents: canDeleteStudents(user),
       canExportCsv: canExportCsv(user),
       canEditOwnSubject: canEditOwnSubject(user),
+      mustChangePassword: user.mustChangePassword === true,
       canBackup: canManageUsers,
       canManageUsers
     }
@@ -90,8 +97,8 @@ function getLoginAttempt(attemptKey) {
   return attempt;
 }
 
-// A shared school network must not let one person's typos block every other
-// account. The rate limit remains tied to the originating IP and login value.
+// Em uma rede escolar compartilhada, os erros de uma pessoa não podem bloquear as demais
+// contas. O limite de tentativas considera o endereço IP e o identificador do login.
 function getLoginAttemptKey(ip, username) {
   return JSON.stringify([String(ip || ''), normalizeLookupValue(username)]);
 }
@@ -233,7 +240,7 @@ router.post('/password', ensureAuth, async (req, res) => {
     const updatedUser = await changePassword(req.session.user.id, currentPassword, newPassword);
     req.session.user = updatedUser;
     await saveSession(req);
-    return apiSuccess(res, null, 'Senha alterada com sucesso.');
+    return apiSuccess(res, getSessionData(updatedUser), 'Senha alterada com sucesso.');
   } catch (error) {
     if (error.code === 'invalid_current_password') {
       return apiBadRequest(res, 'Senha atual inválida.', 'invalid_current_password');

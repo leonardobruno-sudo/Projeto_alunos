@@ -49,7 +49,7 @@ function draftNumber(value: string): number | null {
   return Number.isFinite(parsed) ? parsed : null
 }
 
-/** Validates the relationships that must hold before the academic payload is sent. */
+/** Confere as relações entre os dados antes de enviá-los à API acadêmica. */
 export function validateSubjectDrafts(drafts: SubjectDraft[]): string | null {
   for (const draft of drafts) {
     const hasValues = [draft.nota, draft.faltas, draft.faltasJustificadas, draft.totalAulas]

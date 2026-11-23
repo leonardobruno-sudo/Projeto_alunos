@@ -1,6 +1,10 @@
 /**
- * Express session store backed by SQLite, including expiration handling and
- * cleanup of expired records.
+ * Papel de `sessionStore`: oferece recursos compartilhados ao servidor, como sessão, permissões, respostas e acesso ao banco.
+ * Este arquivo recebe ou produz dados para os módulos indicados pelos imports e exports abaixo.
+ */
+/**
+ * Armazena sessões do Express no SQLite, controla sua validade e
+ * remove registros expirados.
  */
 const session = require('express-session');
 const { db } = require('./database');

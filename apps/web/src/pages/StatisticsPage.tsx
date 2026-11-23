@@ -1,9 +1,14 @@
-/** Presents scoped academic indicators with selectable charts, export and print actions. */
+/** Papel de `StatisticsPage`: apresenta uma área do sistema e coordena seus componentes, estado local e chamadas à API conforme as permissões da pessoa usuária.
+ * Ele se conecta aos serviços e componentes importados e entrega sua saída a quem o consome.
+ */
+
+/** Exibe indicadores acadêmicos autorizados e permite alternar, exportar ou imprimir gráficos. */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { DataSourceSelector } from '../components/DataSourceControls'
 import { StatisticsChart, type ChartDatum, type StatisticsChartType } from '../components/StatisticsChart'
 import { QUOTA_OPTIONS, quotaLabel } from '../constants/quotas'
-import { DEFAULT_PERIODS, type StatisticsData, type StatisticsFilters, type StatisticsValue, type User } from '../types'
+import { DEFAULT_PERIODS, type AcademicDataSource, type StatisticsData, type StatisticsFilters, type StatisticsValue, type User } from '../types'
 import { api } from '../utils/api'
 import './StatisticsPage.css'
 
@@ -169,6 +174,7 @@ function downloadCsv(data: StatisticsData) {
 export function StatisticsPage({ user, onMessage, onError }: StatisticsPageProps) {
   const [data, setData] = useState<StatisticsData | null>(null)
   const [periodIndex, setPeriodIndex] = useState(0)
+  const [dataSource, setDataSource] = useState<AcademicDataSource>('atual')
   const [chartType, setChartType] = useState<StatisticsChartType>('columns')
   const [draftFilters, setDraftFilters] = useState<StatisticsSearchFilters>(emptyStatisticsFilters)
   const [appliedFilters, setAppliedFilters] = useState<StatisticsSearchFilters>(emptyStatisticsFilters)
@@ -178,10 +184,14 @@ export function StatisticsPage({ user, onMessage, onError }: StatisticsPageProps
   const [error, setError] = useState('')
   const requestVersion = useRef(0)
   const isAdmin = user.role === 'Admin'
-  const canSearchStudents = ['Professor', 'Diretor', 'Admin'].includes(user.role)
+  const canSearchStudents = ['Professor', 'Coordenador', 'Diretor', 'Admin'].includes(user.role)
   const shouldShowGradeDistribution = user.role !== 'Aluno'
 
-  const load = useCallback(async (requestedPeriod: number, requestedFilters: StatisticsSearchFilters) => {
+  const load = useCallback(async (
+    requestedPeriod: number,
+    requestedFilters: StatisticsSearchFilters,
+    requestedSource: AcademicDataSource,
+  ) => {
     const version = ++requestVersion.current
     setLoading(true)
     setError('')
@@ -194,6 +204,7 @@ export function StatisticsPage({ user, onMessage, onError }: StatisticsPageProps
           : {}
       const result = await api.getStatistics({
         periodo: requestedPeriod,
+        fonte: requestedSource,
         ...scopedFilters,
       })
       if (version !== requestVersion.current) return
@@ -207,7 +218,7 @@ export function StatisticsPage({ user, onMessage, onError }: StatisticsPageProps
   }, [canSearchStudents, isAdmin, onError])
 
   useEffect(() => {
-    void load(0, emptyStatisticsFilters)
+    void load(0, emptyStatisticsFilters, 'atual')
   }, [load])
 
   const periods = data?.periodOptions?.length ? data.periodOptions : DEFAULT_PERIODS
@@ -234,7 +245,12 @@ export function StatisticsPage({ user, onMessage, onError }: StatisticsPageProps
 
   function choosePeriod(index: number) {
     setPeriodIndex(index)
-    void load(index, appliedFilters)
+    void load(index, appliedFilters, dataSource)
+  }
+
+  function chooseDataSource(source: AcademicDataSource) {
+    setDataSource(source)
+    void load(periodIndex, appliedFilters, source)
   }
 
   function updateFilter(field: keyof StatisticsSearchFilters, value: string) {
@@ -251,13 +267,13 @@ export function StatisticsPage({ user, onMessage, onError }: StatisticsPageProps
     }
     setDraftFilters(nextFilters)
     setAppliedFilters(nextFilters)
-    void load(periodIndex, nextFilters)
+    void load(periodIndex, nextFilters, dataSource)
   }
 
   function clearStatisticsFilters() {
     setDraftFilters(emptyStatisticsFilters)
     setAppliedFilters(emptyStatisticsFilters)
-    void load(periodIndex, emptyStatisticsFilters)
+    void load(periodIndex, emptyStatisticsFilters, dataSource)
   }
 
   function handleDownload() {
@@ -297,7 +313,7 @@ export function StatisticsPage({ user, onMessage, onError }: StatisticsPageProps
     try {
       const result = await api.saveAcademicHistory(data.periodIndex, overwrite)
       onMessage(result.message)
-      await load(data.periodIndex, appliedFilters)
+      await load(data.periodIndex, appliedFilters, dataSource)
     } catch (saveError) {
       setError(onError(saveError))
     } finally {
@@ -411,6 +427,11 @@ export function StatisticsPage({ user, onMessage, onError }: StatisticsPageProps
           )}
         </div>
         <div className="statistics-source-actions">
+          <DataSourceSelector
+            id="statistics-data-source"
+            onChange={chooseDataSource}
+            value={dataSource}
+          />
           <span className={`statistics-source-badge ${data?.dataSource ?? 'atual'}`}>{source.badge}</span>
           {isAdmin && (
             <>
@@ -449,7 +470,7 @@ export function StatisticsPage({ user, onMessage, onError }: StatisticsPageProps
           </div>
         </div>
         <div className="statistics-actions">
-          <button className="button button-secondary" disabled={loading} onClick={() => void load(periodIndex, appliedFilters)} type="button">Atualizar dados</button>
+          <button className="button button-secondary" disabled={loading} onClick={() => void load(periodIndex, appliedFilters, dataSource)} type="button">Atualizar dados</button>
           {isAdmin && (
             <button className="button button-secondary" disabled={!data || loading} onClick={handleDownload} type="button">Baixar CSV</button>
           )}

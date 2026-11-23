@@ -1,6 +1,10 @@
 /**
- * Regression coverage for the compact student-list DTO used by the Matérias
- * page. It runs against an isolated SQLite file and never touches real data.
+ * Papel de `student-subject-catalog.test`: garante que um comportamento importante continue funcionando nos cenários descritos a seguir.
+ * Este arquivo recebe ou produz dados para os módulos indicados pelos imports e exports abaixo.
+ */
+/**
+ * Confere o DTO compacto da lista de alunos usado pela página Matérias
+ * em um SQLite isolado, sem acessar dados reais.
  */
 'use strict';
 

@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState, type ChangeEvent, type FormEvent } from 'react'
 import { ProfileAvatar } from '../components/ProfileAvatar'
+import { PasswordInput } from '../components/PasswordInput'
 import type { User } from '../types'
 import { api } from '../utils/api'
 import { getProfilePhotoUrl } from '../utils/profilePhoto'
@@ -129,6 +130,7 @@ export function SettingsPage({ user, theme, accessibility, onToggleTheme, onAcce
     setSavingPassword(true)
     try {
       const result = await api.changePassword({ currentPassword, newPassword, confirmPassword })
+      onUserChange(result.data)
       onMessage(result.message || 'Senha alterada com sucesso.')
       setCurrentPassword('')
       setNewPassword('')
@@ -249,18 +251,9 @@ export function SettingsPage({ user, theme, accessibility, onToggleTheme, onAcce
           </div>
           {passwordError && <div className="alert alert-error" role="alert">{passwordError}</div>}
           <form className="stack-form" onSubmit={changePassword}>
-            <label>
-              Senha atual
-              <input autoComplete="current-password" onChange={(event) => setCurrentPassword(event.target.value)} required type="password" value={currentPassword} />
-            </label>
-            <label>
-              Nova senha
-              <input autoComplete="new-password" minLength={8} onChange={(event) => setNewPassword(event.target.value)} required type="password" value={newPassword} />
-            </label>
-            <label>
-              Confirmar nova senha
-              <input autoComplete="new-password" minLength={8} onChange={(event) => setConfirmPassword(event.target.value)} required type="password" value={confirmPassword} />
-            </label>
+            <PasswordInput autoComplete="current-password" label="Senha atual" onChange={(event) => setCurrentPassword(event.target.value)} required value={currentPassword} />
+            <PasswordInput autoComplete="new-password" label="Nova senha" minLength={8} onChange={(event) => setNewPassword(event.target.value)} required value={newPassword} />
+            <PasswordInput autoComplete="new-password" label="Confirmar nova senha" minLength={8} onChange={(event) => setConfirmPassword(event.target.value)} required value={confirmPassword} />
             <button className="button button-primary" disabled={savingPassword} type="submit">
               {savingPassword ? 'Salvando...' : 'Salvar nova senha'}
             </button>

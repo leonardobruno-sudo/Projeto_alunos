@@ -12,7 +12,7 @@
     "quickstart": "npm run build && node apps/api/src/scripts/quickstart.js",
     "build": "npm --prefix apps/web run build",
     "lint": "npm --prefix apps/web run lint",
-    "test": "node --test apps/api/test/student-account-cleanup.test.js apps/api/test/ai-command-controller.test.js apps/api/test/student-subject-catalog.test.js apps/api/test/profile-photo.test.js apps/api/test/academic-risk.test.js apps/api/test/role-permissions.test.js apps/api/test/subject-update-regression.test.js",
+    "test": "node --test",
     "client:dev": "npm --prefix apps/web run dev",
     "create:admin": "node apps/api/src/scripts/create-admin.js"
   },

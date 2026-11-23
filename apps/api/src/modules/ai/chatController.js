@@ -1,10 +1,14 @@
 /**
- * Express adapter for POST /chat.
+ * Papel de `chatController`: implementa regras de negócio do domínio e conversa com os serviços compartilhados e o banco sem depender da interface.
+ * Este arquivo recebe ou produz dados para os módulos indicados pelos imports e exports abaixo.
+ */
+/**
+ * Adapta requisições Express à rota `POST /chat`.
  *
- * Mount it behind the existing `ensureAuth` middleware:
+ * Monte a rota atrás do middleware de autenticação `ensureAuth`:
  *   router.post('/chat', ensureAuth, createChatController());
- * or call `registerChatRoute(router)` to apply that middleware automatically.
- * The handler reads identity only from req.session.user, never from the body.
+ * Ou chame `registerChatRoute(router)` para aplicar esse middleware automaticamente.
+ * O controlador obtém a identidade de `req.session.user`, nunca do corpo da requisição.
  */
 'use strict';
 
@@ -27,7 +31,7 @@ function getSessionUser(req) {
     : null;
 }
 
-/** Creates a request handler whose successful JSON body is the chat contract. */
+/** Cria o controlador da requisição e define o formato JSON de sucesso do chat. */
 function createChatController({ chatService = new AiChatService() } = {}) {
   if (!chatService || typeof chatService.respond !== 'function') {
     throw new TypeError('Um serviço de chat válido é obrigatório.');
@@ -48,9 +52,9 @@ function createChatController({ chatService = new AiChatService() } = {}) {
     }
 
     try {
-      const response = await chatService.respond({ user, message: input.message });
-      // Keep the public contract deliberately small; internal authorized
-      // context is not serialized back to the browser.
+      const response = await chatService.respond({ user, message: input.message, contextMessage: input.contextMessage });
+      // A resposta pública contém apenas os campos necessários; o contexto interno
+      // autorizado não é enviado de volta ao navegador.
       return apiSuccess(res, {
         message: response.message,
         mode: response.mode,
@@ -68,8 +72,8 @@ function createChatController({ chatService = new AiChatService() } = {}) {
 }
 
 /**
- * Optional integration helper. It is intentionally exported rather than
- * mounted here so this isolated module does not modify SGAC's existing routes.
+ * Esta função é exportada sem registro automático para manter o módulo
+ * independente e evitar alterações nas rotas existentes do SGAC.
  */
 function registerChatRoute(router, options) {
   if (!router || typeof router.post !== 'function') {

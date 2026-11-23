@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react'
 import type { User, UserCreatePayload, UserUpdatePayload } from '../types'
 import { api } from '../utils/api'
+import { PasswordInput } from '../components/PasswordInput'
 
 interface PermissionsPageProps {
   onMessage: (message: string) => void
@@ -15,7 +16,7 @@ interface PermissionRowProps {
   onDelete: (user: User) => Promise<string>
 }
 
-const roles = ['Admin', 'Diretor', 'Professor']
+const roles = ['Admin', 'Diretor', 'Coordenador', 'Professor']
 
 const emptyUserForm: UserCreatePayload = {
   username: '',
@@ -104,7 +105,7 @@ function PermissionRow({ user, onSave, onDelete }: PermissionRowProps) {
           <input aria-label={`Disciplina de ${user.username}`} onChange={(event) => setDisciplina(event.target.value)} placeholder="Disciplina" value={disciplina} />
           <input aria-label={`Turma de ${user.username}`} onChange={(event) => setTurma(event.target.value)} placeholder="Turma" value={turma} />
           <button className="button button-primary" disabled={saving || deleting} type="submit">{saving ? 'Salvando...' : 'Salvar'}</button>
-          {(user.role === 'Professor' || user.role === 'Diretor') && (
+          {(user.role === 'Professor' || user.role === 'Coordenador' || user.role === 'Diretor') && (
             <button className="button button-danger" disabled={saving || deleting} onClick={() => void remove()} type="button">
               {deleting ? 'Excluindo...' : 'Excluir'}
             </button>
@@ -233,17 +234,14 @@ export function PermissionsPage({ onMessage, onError }: PermissionsPageProps) {
               value={newUser.username}
             />
           </label>
-          <label>
-            Senha
-            <input
-              autoComplete="new-password"
-              minLength={8}
-              onChange={(event) => updateNewUser('password', event.target.value)}
-              required
-              type="password"
-              value={newUser.password}
-            />
-          </label>
+          <PasswordInput
+            autoComplete="new-password"
+            label="Senha"
+            minLength={8}
+            onChange={(event) => updateNewUser('password', event.target.value)}
+            required
+            value={newUser.password}
+          />
           <label>
             Nome
             <input
@@ -262,7 +260,7 @@ export function PermissionsPage({ onMessage, onError }: PermissionsPageProps) {
             Curso
             <input
               onChange={(event) => updateNewUser('curso', event.target.value)}
-              required={['Diretor', 'Professor'].includes(newUser.role)}
+              required={['Diretor', 'Coordenador', 'Professor'].includes(newUser.role)}
               value={newUser.curso}
             />
           </label>
